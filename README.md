@@ -6,11 +6,13 @@ Built by **Phoenix Software** on top of terreng's [computercraft-streaming-music
 
 ![Now Playing with the visualiser](screenshots/now-playing.png)
 
-| Search | Library |
+| Up next | Playlists |
 | --- | --- |
-| ![Search results](screenshots/search.png) | ![Favourites in the library](screenshots/library.png) |
-| **Queue** | **Settings** |
-| ![The queue](screenshots/queue.png) | ![Settings](screenshots/settings.png) |
+| ![Now Playing with the next songs](screenshots/up-next.png) | ![A playlist ready to play](screenshots/playlist.png) |
+| **Library** | **Queue** |
+| ![Favourites, playlists and recently played](screenshots/library.png) | ![Editing the queue](screenshots/queue.png) |
+| **Settings** | **About** |
+| ![Speaker Link settings with linked computers](screenshots/settings.png) | ![About, with credits](screenshots/about.png) |
 
 ## Install
 
