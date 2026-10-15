@@ -27,6 +27,7 @@ local SETUPS = {
   wired      = { w = 51, h = 19, speakers = 2, modem = true, wired = true },
   basic_auto = { w = 51, h = 19, speakers = 1, modem = true, basic = true },
   queue      = { w = 51, h = 19, speakers = 1, modem = false, scripted_only = true },
+  mirror     = { w = 57, h = 24, speakers = 1, modem = true, monitor = true, mirror = true },
   pocket_nospeaker = { w = 26, h = 20, speakers = 0, modem = true, pocket = true },
   pocket_noisy_remote = { w = 26, h = 20, speakers = 1, modem = true, pocket = true, args = { "remote" } },
 }
@@ -296,6 +297,7 @@ do
 end
 
 local defs, vals = {}, {}
+if setup.mirror then vals["phoenix_music.mirror"] = "monitor_0" end
 settings = {
   define = function(k, o) defs[k] = o end,
   get = function(k, d)
@@ -610,6 +612,11 @@ end
 ---------------------------------------------------------------------------
 local W, H = setup.w, setup.h
 local function click(x, y)
+  if setup.mirror then
+    -- taps on the monitor and clicks on the computer, mixed
+    if math.random() < 0.5 then return "monitor_touch", "monitor_0", x, y end
+    return "mouse_click", 1, math.min(x, 51), math.min(y, 19)
+  end
   if setup.monitor then return "monitor_touch", "monitor_0", x, y end
   return "mouse_click", 1, x, y
 end

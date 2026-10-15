@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.6.4 for CC: Tweaked
+  Phoenix Music 3.7.0 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.6.4",
+  version = "3.7.0",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -137,6 +137,16 @@ settings.define("phoenix_music.update_channel", {
   description = "Phoenix Music update branch on GitHub (main, or dev for testing)",
   default = "main",
   type = "string",
+})
+settings.define("phoenix_music.mirror", {
+  description = "Monitor to also show the player on (blank for none)",
+  default = "",
+  type = "string",
+})
+settings.define("phoenix_music.mirror_scale", {
+  description = "Text size on the mirrored monitor (0.5 small, 1 large)",
+  default = 0.5,
+  type = "number",
 })
 settings.define("phoenix_music.rx_volume", {
   description = "This linked speaker's own volume, in percent of the player's",
@@ -2514,7 +2524,25 @@ function F.drawModal()
   F.addHit(1, 1, W, H, function() modal = nil; F.redraw() end)
 end
 
+-- The player can also show on a monitor next to the computer: the same
+-- player, laid out for the monitor's size, with taps on it working too.
+-- Typing (search, names, PINs) happens on the computer.
 function F.drawFrame()
+  local m = X.mirror
+  if m then
+    local pW, pH = W, H
+    W, H = m.W, m.H
+    local prev = term.redirect(m.win)
+    local ok = pcall(F.drawFrameOn, m.win)
+    m.hits = hits
+    term.redirect(prev)
+    W, H = pW, pH
+    if not ok then X.closeMirror() end -- monitor broken or gone: carry on without it
+  end
+  F.drawFrameOn(win)
+end
+
+function F.drawFrameOn(win)
   win.setVisible(false)
   hits = {}
   term.setCursorBlink(false)
@@ -2540,8 +2568,8 @@ end
 ---------------------------------------------------------------------------
 -- Input
 ---------------------------------------------------------------------------
-function F.handleClick(x, y)
-  for _, h in ipairs(hits) do
+function F.handleClick(x, y, list)
+  for _, h in ipairs(list or hits) do
     if x >= h.x and x < h.x + h.w and y >= h.y and y < h.y + h.h then
       h.fn(x, y)
       return true
@@ -2677,6 +2705,11 @@ function F.uiLoop()
         F.handleClick(b, c)
       elseif ev == "monitor_touch" and a == monitor_name then
         F.handleClick(b, c)
+      elseif ev == "monitor_touch" and X.mirror and a == X.mirror.name then
+        F.handleClick(b, c, X.mirror.hits)
+      elseif (ev == "peripheral_detach" or ev == "monitor_resize") and X.mirror and a == X.mirror.name then
+        -- unplugged or resized: set it up again (or drop it if it's gone)
+        X.openMirror(X.mirror.name)
       elseif ev == "mouse_up" then
         if X.seek_target then X.seek_due = F.now_ms(); X.applySeek() end
       elseif ev == "mouse_drag" and a == 1 and not modal then
@@ -3287,12 +3320,71 @@ end
 function X.applyTheme()
   local base = findByName(X.BACKGROUNDS, settings.get("phoenix_music.background"))
   local accent = findByName(X.ACCENTS, settings.get("phoenix_music.accent"))
-  win.setPaletteColour(colours.black, base.bg)
-  win.setPaletteColour(colours.grey, base.panel)
-  win.setPaletteColour(colours.brown, base.btn)
-  win.setPaletteColour(colours.lightGrey, base.muted)
-  win.setPaletteColour(colours.white, base.text)
-  win.setPaletteColour(colours.orange, accent.rgb)
+  local targets = { win }
+  if X.mirror then targets[2] = X.mirror.win end
+  for _, w in ipairs(targets) do
+    w.setPaletteColour(colours.black, base.bg)
+    w.setPaletteColour(colours.grey, base.panel)
+    w.setPaletteColour(colours.brown, base.btn)
+    w.setPaletteColour(colours.lightGrey, base.muted)
+    w.setPaletteColour(colours.white, base.text)
+    w.setPaletteColour(colours.orange, accent.rgb)
+  end
+  F.redraw()
+end
+
+-- Starts showing the player on a monitor as well (or stops, with no name).
+function X.openMirror(name)
+  X.closeMirror()
+  if not name or name == "" or name == monitor_name or remote_mode then return end
+  if not peripheral.hasType(name, "monitor") then return end
+  local mon = peripheral.wrap(name)
+  if not mon or not mon.isColour() then return end
+  local ok = pcall(function()
+    mon.setTextScale(tonumber(settings.get("phoenix_music.mirror_scale")) or 0.5)
+    local saved = {}
+    for c in pairs(THEME) do saved[c] = { mon.getPaletteColour(c) } end
+    local mw, mh = mon.getSize()
+    X.mirror = { name = name, mon = mon, win = window.create(mon, 1, 1, mw, mh, true), W = mw, H = mh, hits = {}, saved = saved }
+  end)
+  if not ok then X.mirror = nil end
+  X.applyTheme()
+end
+
+function X.closeMirror()
+  local m = X.mirror
+  if not m then return end
+  X.mirror = nil
+  pcall(function()
+    for c, rgb in pairs(m.saved) do m.mon.setPaletteColour(c, table.unpack(rgb)) end
+    m.mon.setBackgroundColour(colours.black)
+    m.mon.clear()
+  end)
+end
+
+function X.mirrorMenu()
+  local opts = { { "Off", function()
+    settings.set("phoenix_music.mirror", "")
+    settings.save()
+    X.openMirror(nil)
+  end } }
+  for _, name in ipairs(peripheral.getNames()) do
+    if peripheral.hasType(name, "monitor") and name ~= monitor_name then
+      local mon = peripheral.wrap(name)
+      if mon and mon.isColour() then
+        opts[#opts + 1] = { name, function()
+          settings.set("phoenix_music.mirror", name)
+          settings.save()
+          X.openMirror(name)
+        end }
+      end
+    end
+  end
+  modal = {
+    title = "Show on a monitor too",
+    sub = #opts > 1 and "Taps work on it; type on the computer" or "No advanced monitor found",
+    options = opts,
+  }
   F.redraw()
 end
 
@@ -3523,6 +3615,17 @@ function X.drawSettings()
     function() X.themeMenu("background") end)
   row("Accent: ", findByName(X.ACCENTS, settings.get("phoenix_music.accent")).name, "Change",
     function() X.themeMenu("accent") end, C.accent)
+  if not monitor_name then
+    row("Monitor: ", X.mirror and X.mirror.name or "Off", "Change", X.mirrorMenu)
+    if X.mirror then
+      local big = (tonumber(settings.get("phoenix_music.mirror_scale")) or 0.5) >= 1
+      toggle("Monitor text", big, function()
+        settings.set("phoenix_music.mirror_scale", big and 0.5 or 1)
+        settings.save()
+        X.openMirror(X.mirror.name)
+      end, "Large", "Small")
+    end
+  end
   gap()
 
   -- Timers and triggers
@@ -3887,6 +3990,7 @@ end
 -- Run
 ---------------------------------------------------------------------------
 pcall(X.applyTheme)
+if not monitor_name and not remote_mode then pcall(X.openMirror, settings.get("phoenix_music.mirror")) end
 local ok, err
 if remote_mode then
   ok, err = pcall(parallel.waitForAny, X.runRemote, X.updateLoop)
@@ -3931,6 +4035,7 @@ else
 end
 
 term.redirect(old_term)
+pcall(X.closeMirror)
 F.restorePalette()
 parent.setBackgroundColour(colours.black)
 parent.setTextColour(colours.white)

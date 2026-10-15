@@ -48,6 +48,7 @@ Needs CC: Tweaked 1.100.0 or newer.
 - **Themes**: Dark, Midnight or Light, with 8 accent colours
 - **Audio smoothing** to take the edge off CC's crunchy sound
 - **Auto-updates** from this repo
+- **Monitor mirroring**: show the player on a monitor as well as the computer (Settings → Appearance → Monitor). Tap to control it on the monitor, type on the computer
 - Works on computers, pocket computers and monitors, with mouse, touch and keyboard
 
 ## Commands
