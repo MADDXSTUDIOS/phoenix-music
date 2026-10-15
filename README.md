@@ -92,7 +92,7 @@ Use a different Link name to run separate zones, and set a PIN so nobody else ca
 
 ## Known limits
 
-- **Videos over about 15 minutes won't play.** This is a limit of the music server, not the player. They're hidden from search by default (Settings → Long videos to show them).
+- **Videos over about 15 minutes won't play.** This is a limit of the music server, not the player. They're hidden from search by default, along with **live streams**, which the server can't play at all (Settings → Long & live videos to show them).
 - **Changing the volume** briefly restarts the sound from the same spot, because CC's speakers only pick up a new volume when they start afresh.
 - **Audio quality** is limited by CC's speakers and audio format. Smoothing helps a little but it'll always sound like CC.
 - **Phoenix Music uses terreng's free music server.** If it ever goes down, the player can't fetch music. Running it costs him money, so if you enjoy this, consider supporting him at [patreon.com/exclamatory](https://patreon.com/exclamatory).
@@ -101,6 +101,7 @@ Use a different Link name to run separate zones, and set a PIN so nobody else ca
 
 - **terreng (Terren Gurule)**: original player, music server and audio engine
 - **Phoenix Software**: new interface, controls and everything else
+- **JzJad**: [Jukebox](https://craftfm.cc), which inspired Speaker Link and playlists
 
 Released under the [MIT License](LICENSE).
 

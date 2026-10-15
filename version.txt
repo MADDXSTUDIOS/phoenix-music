@@ -1,5 +1,5 @@
-3.6.0
+3.6.1
+Live streams marked and hidden
+Credit for JzJad's Jukebox
 Next song downloads early
 No more wait between songs
-Grey computers start as a speaker
-Check button on linked speakers

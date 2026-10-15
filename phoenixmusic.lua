@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.6.0 for CC: Tweaked
+  Phoenix Music 3.6.1 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.6.0",
+  version = "3.6.1",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -1072,6 +1072,17 @@ function X.tidyItem(r)
     chan = "unknown channel"
     r.artist = dur .. " \183 Unknown channel"
   end
+  -- Live streams come back with no length ("undefined", "LIVE" or nothing);
+  -- the server can't convert them, so they're marked and hidden like long ones
+  if r.type ~= "playlist" and not dur then
+    local head, rest = r.artist:match("^(.-)%s*\183%s*(.*)$")
+    if not head then head, rest = "", r.artist end
+    if not head:match("%d:%d") then
+      r.live = true
+      chan = rest ~= "" and rest or "unknown channel"
+      r.artist = "LIVE \183 " .. chan
+    end
+  end
   local _, letters = r.name:gsub("%w", "")
   if letters < 3 and (mangled or r.name == "") then r.name = "Video from " .. (chan or "unknown channel") end
   if type(r.playlist_items) == "table" then
@@ -1121,6 +1132,7 @@ function X.maybePrefetch()
   if X.prefetch or not playing or playing_status ~= 1 then return end
   local nxt = X.peekNext()
   if not nxt or not nxt.id or X.prefetch_failed[nxt.id] or X.tooLong(nxt) then return end
+  if tostring(nxt.artist):find("^LIVE") then return end
   for _, c in ipairs(X.cache) do
     if c.id == nxt.id then return end -- already downloaded
   end
@@ -2275,7 +2287,8 @@ function F.drawSearch()
     F.drawList(2, search_results, 7, function(i, it)
       modal = {
         title = it.name,
-        sub = it.too_long and "Over 15 min - the server usually can't play these" or it.artist,
+        sub = (it.live and "Live streams can't be played")
+          or (it.too_long and "Over 15 min - the server usually can't play these") or it.artist,
         options = F.libraryOptions({
           { "Play now", function() F.playNow(it) end },
           { "Play next", function() F.playNext(it) end },
@@ -2285,6 +2298,7 @@ function F.drawSearch()
       F.redraw()
     end, function(i, it)
       if it.type == "playlist" then return "", " [list]" end
+      if it.live then return "", " LIVE" end
       return "", it.too_long and " >15m" or ""
     end)
   elseif search_error then
@@ -2409,6 +2423,7 @@ function F.drawAbout()
   para(APP.original_url, C.muted)
   para("Original server and audio engine by terreng. New interface and controls by " .. APP.publisher .. ".", C.muted)
   para("Released under the MIT License.", C.muted)
+  para("Speaker Link and playlists inspired by JzJad's Jukebox (craftfm.cc).", C.muted)
   gap()
   para("The music server is free but costs terreng money to run. Support it: patreon.com/exclamatory", C.accent)
   gap()
@@ -2788,7 +2803,7 @@ function F.httpLoop()
               local blob = tostring(r.name or "") .. " " .. tostring(r.artist or "")
               if not blob:lower():find("patreon", 1, true) then
                 X.tidyItem(r)
-                r.too_long = r.type ~= "playlist" and X.tooLong(r)
+                r.too_long = r.type ~= "playlist" and (X.tooLong(r) or r.live)
                 real[#real + 1] = r
               end
             end
@@ -2817,7 +2832,9 @@ function F.httpLoop()
       elseif url == last_download_url then
         is_loading = false
         is_error = true
-        X.error_text = X.tooLong(now_playing) and "Too long for the server (15 min max)"
+        local live = now_playing and tostring(now_playing.artist):find("^LIVE")
+        X.error_text = (live and "Live streams can't be played")
+          or (X.tooLong(now_playing) and "Too long for the server (15 min max)")
           or "Couldn't load this song"
         if #queue > 0 then X.skip_at = F.now_ms() + 3000 end
         playing = false
@@ -3445,7 +3462,7 @@ function X.drawSettings()
     F.redraw()
   end)
   local hide = settings.get("phoenix_music.hide_long")
-  toggle(narrow and "Long videos" or "Long videos (15m+)", hide, function()
+  toggle(narrow and "Long & live" or "Long & live videos", hide, function()
     settings.set("phoenix_music.hide_long", not hide)
     settings.save()
     X.filterResults()
