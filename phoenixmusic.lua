@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.6.2 for CC: Tweaked
+  Phoenix Music 3.6.3 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.6.2",
+  version = "3.6.3",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -2877,6 +2877,11 @@ function F.netLoop()
         X.broadcastState()
       elseif msg.type == "remote_hello" then
         X.broadcastState()
+      elseif msg.type == "state" and id ~= os.getComputerID() then
+        -- Another player on our Link: the remote and speakers will get confused
+        local first = not X.other_player
+        X.other_player = { id = id, seen = os.clock() }
+        if first then F.redraw() end
       end
     end
     for rid, r in pairs(receivers) do
@@ -3425,6 +3430,9 @@ function X.drawSettings()
       F.askText("New Link name (now " .. group .. ")", "", F.setGroup)
     end)
     row("PIN: ", pin == "" and "none" or string.rep("*", #pin), "PIN", X.pinMenu)
+    if X.other_player and os.clock() - X.other_player.seen < 5 then
+      para("Another player (computer " .. X.other_player.id .. ") is on this Link. Give one of them a different Link name, or the remote and speakers will get mixed up.", C.err)
+    end
     line("Speakers here: " .. #speakers, C.muted)
     local rx, rxSpk = F.activeReceivers()
     if rx == 0 then
@@ -3756,8 +3764,13 @@ function X.runRemote()
     while true do
       local id, msg = rednet.receive(PROTOCOL)
       if P.ok(msg, group, pin) and msg.type == "state" then
-        st, st_at, host = msg, os.clock(), id
-        os.queueEvent("remote_redraw")
+        -- Stick with one player. Only switch if ours has gone quiet, or if
+        -- ours is idle and this one is actually playing something.
+        local ours_alive = host and st and os.clock() - st_at < 4
+        if not ours_alive or id == host or (msg.name and not st.name) then
+          st, st_at, host = msg, os.clock(), id
+          os.queueEvent("remote_redraw")
+        end
       end
     end
   end

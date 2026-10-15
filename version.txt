@@ -1,5 +1,5 @@
-3.6.2
+3.6.3
+Remote sticks to one player
+Warns about two players on a Link
 Fix: search showing no results
 Live streams marked and hidden
-Credit for JzJad's Jukebox
-Next song downloads early

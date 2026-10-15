@@ -612,6 +612,9 @@ end
 
 -- A linked speaker and a remote say hello now and then (player scenarios)
 local function hostChatter()
+  for t = 3, SIM_SECONDS, 0.5 do
+    at(t, "rednet_message", 8, { type = "state", group = "default", pin = "", playing = false, queue = 0 }, "phoenix_music")
+  end
   for t = 1, SIM_SECONDS, 5 do
     at(t, "rednet_message", 7, { type = "hello", group = "default", pin = "", label = "Kitchen", speakers = 2, volume = 100 }, "phoenix_music")
   end
@@ -649,6 +652,10 @@ local function linkScript()
 end
 
 local function remoteScript()
+  -- A second, idle player on the same Link (the remote must not flip to it)
+  for t = 1.25, SIM_SECONDS, 0.5 do
+    at(t, "rednet_message", 4, { type = "state", group = "default", pin = "", playing = false, queue = 0 }, "phoenix_music")
+  end
   for t = 1, SIM_SECONDS, 0.5 do
     at(t, "rednet_message", 3, {
       type = "state", group = "default", pin = "",
