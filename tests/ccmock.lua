@@ -570,6 +570,9 @@ local function respond(url)
   end
   if url:find("search=", 1, true) then
     stats.searches = stats.searches + 1
+    -- Even seeds: the server's half asleep and every other search fails,
+    -- so the app's quiet retry has to kick in
+    if seed % 2 == 0 and not setup.scripted_only and stats.searches % 2 == 1 then return nil end
     return SEARCH_JSON
   end
   if url:find("&id=", 1, true) then
