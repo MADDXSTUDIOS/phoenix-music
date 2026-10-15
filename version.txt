@@ -1,5 +1,5 @@
-3.7.3
+3.7.4
+Fix: pocket popup text cut off
 Fix: far speaker stuck at the wrong volume
 Search retries if the server's waking up
 Settings explain what they do
-Show the player on a monitor too

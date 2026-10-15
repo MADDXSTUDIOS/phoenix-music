@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.3 for CC: Tweaked
+  Phoenix Music 3.7.4 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.3",
+  version = "3.7.4",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -4058,8 +4058,8 @@ else
   if ask_nospeaker and is_pocket then
     -- A pocket with no speaker can't play anything itself: it's a remote
     modal = {
-      title = "No speaker in this pocket",
-      sub = "Use it as a remote instead?",
+      title = "No speaker here",
+      sub = "Use it as a remote?",
       options = {
         { "Switch to the remote", function()
           settings.set("phoenix_music.nospeaker_mode", "remote")

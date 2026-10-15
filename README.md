@@ -6,6 +6,8 @@ Built by **Phoenix Software** on top of terreng's [computercraft-streaming-music
 
 ![Now Playing with the visualiser](screenshots/now-playing.png)
 
+![Phoenix Music on a monitor in the world](screenshots/in-world.png)
+
 | Up next | Playlists |
 | --- | --- |
 | ![Now Playing with the next songs](screenshots/up-next.png) | ![A playlist ready to play](screenshots/playlist.png) |
@@ -13,6 +15,12 @@ Built by **Phoenix Software** on top of terreng's [computercraft-streaming-music
 | ![Favourites, playlists and recently played](screenshots/library.png) | ![Editing the queue](screenshots/queue.png) |
 | **Settings** | **About** |
 | ![Speaker Link settings with linked computers](screenshots/settings.png) | ![About, with credits](screenshots/about.png) |
+
+### Pocket computers
+
+| Player | Remote |
+| --- | --- |
+| <img src="screenshots/pocket.png" alt="The player on a pocket computer" width="300"> | <img src="screenshots/remote.png" alt="The remote on a pocket computer" width="300"> |
 
 ## Install
 
@@ -74,6 +82,10 @@ On a computer with a modem but no speaker, Phoenix Music asks whether it should 
 3. They'll show up under **Settings → Speaker Link** on the player within a few seconds.
 
 Or, on the other computer, open Phoenix Music and pick **Settings → Use as speaker**.
+
+| Advanced computer | Standard computer |
+| --- | --- |
+| ![A linked speaker on an advanced computer](screenshots/speaker-link.png) | ![A linked speaker on a standard computer](screenshots/speaker-link-basic.png) |
 
 Use a different Link name to run separate zones, and set a PIN so nobody else can join or control your speakers. The player doesn't need its own speaker if it has linked ones.
 
