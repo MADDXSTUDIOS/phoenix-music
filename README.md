@@ -4,6 +4,14 @@ A feature-packed music player for [CC: Tweaked](https://tweaked.cc/). Search You
 
 Built by **Phoenix Software** on top of terreng's [computercraft-streaming-music](https://github.com/terreng/computercraft-streaming-music).
 
+![Now Playing with the visualiser](screenshots/now-playing.png)
+
+| Search | Library |
+| --- | --- |
+| ![Search results](screenshots/search.png) | ![Favourites in the library](screenshots/library.png) |
+| **Queue** | **Settings** |
+| ![The queue](screenshots/queue.png) | ![Settings](screenshots/settings.png) |
+
 ## Install
 
 On an **Advanced Computer** (or Advanced Pocket Computer) with a speaker attached:
