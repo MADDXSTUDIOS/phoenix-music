@@ -42,11 +42,13 @@ Needs CC: Tweaked 1.100.0 or newer.
 - **Picks up where you left off**: song, position, queue and settings survive a restart
 - **Speaker Link**: play through speakers on other computers, in sync (even if one joins mid-song), with an optional PIN and per-speaker volume
 - **Pocket remote**: control the player from anywhere with an ender modem
+- **Wired speakers**: speakers on a wired modem network play as if they were attached, alongside linked ones
 - **Switch modes from Settings**: turn any computer into a remote or a linked speaker without leaving the app
 - **Visualiser** that moves with the music
 - **Sleep timer, alarm and redstone trigger**
 - **Themes**: Dark, Midnight or Light, with 8 accent colours
 - **Audio smoothing** to take the edge off CC's crunchy sound
+- **Shrugs off server hiccups**: a search that fails while the server wakes up is quietly retried
 - **Auto-updates** from this repo
 - **Monitor mirroring**: show the player on a monitor as well as the computer (Settings → Appearance → Monitor). Tap to control it on the monitor, type on the computer
 - Works on computers, pocket computers and monitors, with mouse, touch and keyboard
@@ -56,7 +58,8 @@ Needs CC: Tweaked 1.100.0 or newer.
 | Command | What it does |
 | --- | --- |
 | `phoenixmusic` | Run the player |
-| `phoenixmusic <monitor> [scale]` | Run on a monitor, e.g. `phoenixmusic monitor_0 0.5` |
+| `phoenixmusic <monitor> [scale]` | Run on a monitor only, e.g. `phoenixmusic monitor_0 0.5` |
+| `monitor <side> phoenixmusic` | Run on the computer and mirror it to that monitor (or set it up in Settings → Appearance → Monitor) |
 | `phoenixmusic link [name]` | Turn this computer into a wireless speaker on a Speaker Link (a standard grey computer does this with just `phoenixmusic`) |
 | `phoenixmusic remote` | Turn this computer into a remote for a player |
 
@@ -64,7 +67,7 @@ On a computer with a modem but no speaker, Phoenix Music asks whether it should 
 
 ## Speaker Link
 
-1. Give the player an **ender modem** (or wireless/wired modem).
+1. Give the player an **ender modem** or wireless modem. (Wired modems don't do Speaker Link: speakers on a wired network just play as the player's own.)
 2. On each other computer, attach a speaker and a modem, then run `phoenixmusic link`.
 3. They'll show up under **Settings → Speaker Link** on the player within a few seconds.
 
@@ -108,4 +111,4 @@ Released under the [MIT License](LICENSE).
 
 ## Development
 
-Every push is checked automatically: the file has to compile, `version.txt` has to match the app's version, and a smoke test (`tests/`) runs the app against a fake CC computer on several screen sizes and modes with random clicks and keys. The updater reads the first line of `version.txt`, and the lines after it are shown as "What's new", so bump both when releasing.
+Every push is checked automatically: the file has to compile, `version.txt` has to match the app's version, and a smoke test (`tests/`) runs the app against a fake CC computer on several screen sizes and modes with random clicks and keys. The updater reads the first line of `version.txt`, and the lines after it are shown as "What's new", so bump both when releasing. When a new version lands on `main` and passes the checks, a GitHub release (`vX.Y.Z`) is published automatically using `.github/release.md`.
