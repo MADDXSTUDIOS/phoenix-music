@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.1 for CC: Tweaked
+  Phoenix Music 3.7.2 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.1",
+  version = "3.7.2",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -2640,6 +2640,7 @@ function F.doSearchInput()
         last_search = input
         last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
         http.request({ url = last_search_url, binary = true })
+        X.search_tries, X.search_retry = 0, nil
         search_results = nil
         search_error = false
         open_playlist = nil
@@ -2869,6 +2870,18 @@ function F.audioLoop()
   end
 end
 
+-- The server sleeps when nobody's using it and the odd search fails while it
+-- wakes up, so try twice more (quietly, still "Searching...") before giving up.
+function X.retrySearch()
+  X.search_tries = (X.search_tries or 0) + 1
+  if X.search_tries <= 2 then
+    X.search_retry = os.startTimer(2)
+  else
+    search_error = true
+  end
+  F.redraw()
+end
+
 function F.httpLoop()
   while true do
     local ev, url, handle = os.pullEvent()
@@ -2877,7 +2890,8 @@ function F.httpLoop()
         search_results = textutils.unserialiseJSON(X.fromUtf8(handle.readAll() or ""))
         handle.close()
         if type(search_results) ~= "table" then
-          search_results, search_error = nil, true
+          search_results = nil
+          X.retrySearch()
         else
           -- The server slips a donation banner in as a fake first result.
           -- Real results always have an id; the banner links to Patreon.
@@ -2910,10 +2924,12 @@ function F.httpLoop()
       elseif type(url) == "string" and url:sub(1, #api_base_url) == api_base_url then
         pcall(handle.close) -- an old request we no longer want
       end
+    elseif ev == "timer" and url == X.search_retry then
+      X.search_retry = nil
+      if last_search_url then http.request({ url = last_search_url, binary = true }) end
     elseif ev == "http_failure" then
       if url == last_search_url then
-        search_error = true
-        F.redraw()
+        X.retrySearch()
       elseif url == last_download_url then
         is_loading = false
         is_error = true
@@ -3559,6 +3575,13 @@ function X.drawSettings()
     y = y + 1
   end
   local function gap() y = y + 1 end
+  -- A short explanation under a setting, indented and dimmed
+  local function desc(str)
+    for _, l in ipairs(F.wrap(str, W - 5)) do
+      if visible(y) then text(4, y, l, C.muted, C.bg) end
+      y = y + 1
+    end
+  end
 
   -- Speaker Link
   line("Speaker Link", C.accent)
@@ -3567,6 +3590,7 @@ function X.drawSettings()
       F.askText("New Link name (now " .. group .. ")", "", F.setGroup)
     end)
     row("PIN: ", pin == "" and "none" or string.rep("*", #pin), "PIN", X.pinMenu)
+    desc("Players, remotes and speakers with the same Link name and PIN work together.")
     if X.other_player and os.clock() - X.other_player.seen < 5 then
       para("Another player (computer " .. X.other_player.id .. ") is on this Link. Give one of them a different Link name, or the remote and speakers will get mixed up.", C.err)
     end
@@ -3594,8 +3618,10 @@ function X.drawSettings()
       end
     end
     row("Use as remote", "", "Switch", function() X.confirmSwitch("remote") end)
+    desc("Control a player on another computer from here.")
     if #speakers > 0 and not is_pocket then -- a pocket makes a poor fixed speaker
       row("Use as speaker", "", "Switch", function() X.confirmSwitch("link") end)
+      desc("Play along with a player on another computer.")
     end
   else
     para("Add a wireless or ender modem to link speakers on other computers or use a remote.", C.muted)
@@ -3613,6 +3639,7 @@ function X.drawSettings()
     settings.save()
     F.redraw()
   end)
+  desc("Takes the edge off the crackly CC audio.")
   local hide = settings.get("phoenix_music.hide_long")
   toggle(narrow and "Long & live" or "Long & live videos", hide, function()
     settings.set("phoenix_music.hide_long", not hide)
@@ -3620,6 +3647,7 @@ function X.drawSettings()
     X.filterResults()
     F.redraw()
   end, "Hidden", "Shown")
+  desc("Videos over 15 min and live streams won't play, so they're hidden from search.")
   gap()
 
   -- Appearance
@@ -3630,6 +3658,7 @@ function X.drawSettings()
     function() X.themeMenu("accent") end, C.accent)
   if not monitor_name then
     row("Monitor: ", X.mirror and X.mirror.name or "Off", "Change", X.mirrorMenu)
+    desc("Show the player on a monitor too. Tap it to control, type on the computer.")
     if X.mirror then
       local big = (tonumber(settings.get("phoenix_music.mirror_scale")) or 0.5) >= 1
       toggle("Monitor text", big, function()
@@ -3654,9 +3683,12 @@ function X.drawSettings()
   if X.alarm then
     alarmVal = X.fmtClock(X.alarm.time) .. (X.alarm.list and (", " .. X.listLabel(X.alarm.list)) or "")
   end
+  desc("Stop playing after a while, or after this song.")
   row("Alarm: ", alarmVal, "Set", X.alarmMenu)
+  desc("Start playing at a Minecraft time.")
   if redstone then
     row("Redstone: ", X.redstoneLabel(), "Set", X.redstoneMenu)
+    desc("What a redstone signal into this computer does.")
   end
   line("Minecraft time: " .. X.fmtClock(os.time()), C.muted)
   gap()
