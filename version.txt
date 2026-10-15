@@ -1,0 +1,9 @@
+3.5.0
+Auto-updates from GitHub
+Instant replays (song cache)
+Speaker Link sync fixes
+Volume applies straight away
+Stop ends the current song
+Long videos hidden
+Tidier pocket layout
+Remote/speaker in Settings

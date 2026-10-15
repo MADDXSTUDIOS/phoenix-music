@@ -1,0 +1,28 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.2 (closest to CC's Lua)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.2
+
+      - name: Compiles
+        run: luac5.2 -p phoenixmusic.lua
+
+      - name: version.txt matches the app
+        run: |
+          app=$(grep -m1 -oP '^  version = "\K[0-9.]+' phoenixmusic.lua)
+          file=$(head -n1 version.txt | tr -d '[:space:]v')
+          echo "app $app, version.txt $file"
+          test "$app" = "$file"
+
+      - name: Smoke test (fake CC computer, random clicks and keys)
+        run: lua5.2 tests/run_all.lua

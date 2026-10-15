@@ -1,18 +1,20 @@
 --[[
-  Phoenix Music 3.4.0 for CC: Tweaked
-  (c) 2026 Phoenix Software
+  Phoenix Music 3.5.0 for CC: Tweaked
+  (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
-  A re-skinned and extended version of terreng's computercraft-streaming-music.
+  A music player built on terreng's computercraft-streaming-music.
   Modifications Copyright (c) 2026 Phoenix Software, released under the same
-  MIT License as the original (reproduced below).
-  The server/API and the way audio is decoded and fed to the speakers are his;
-  this version adds a new UI, pause/resume, stop, previous, restart, a progress
-  bar with seeking, a scrollable queue, keyboard shortcuts and monitor support.
+  MIT License as the original (reproduced below). The music server and the
+  way audio is decoded and fed to the speakers are his; everything else here
+  is new: the interface, playback controls, queue, favourites and playlists,
+  Speaker Link (synced wireless speakers), the remote, the visualiser,
+  timers, themes, the song cache and auto-updates.
 
   Usage:  phoenixmusic                 run on this computer's screen
           phoenixmusic <monitor> [s]   run on a monitor (s = text scale, default 0.5)
           phoenixmusic link [name]     be a wireless speaker on Speaker Link "name"
           phoenixmusic remote          remote control (pocket computer + ender modem)
+          (Settings can switch between player, remote and linked speaker too.)
 
   Speaker Link: give the player, linked speakers and remotes a wireless or
   ender modem. Linked speakers play whatever the player on their Link is
@@ -58,7 +60,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.4.0",
+  version = "3.5.0",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -120,6 +122,21 @@ settings.define("phoenix_music.smoothing", {
   default = "off",
   type = "string",
 })
+settings.define("phoenix_music.hide_long", {
+  description = "Hide search results over 15 minutes (the server can't play them)",
+  default = true,
+  type = "boolean",
+})
+settings.define("phoenix_music.nospeaker_mode", {
+  description = "What a computer with no speaker does: remote or player",
+  default = "",
+  type = "string",
+})
+settings.define("phoenix_music.update_channel", {
+  description = "Phoenix Music update branch on GitHub (main, or dev for testing)",
+  default = "main",
+  type = "string",
+})
 settings.define("phoenix_music.rx_volume", {
   description = "This linked speaker's own volume, in percent of the player's",
   default = 100,
@@ -127,6 +144,7 @@ settings.define("phoenix_music.rx_volume", {
 })
 
 local SYNC_LEAD = 400              -- ms between sending a fresh start and everyone playing it
+local LEAD_AHEAD = 3000            -- ms ahead a player with no speaker sends audio to linked ones
 
 -- Small helpers shared by the player, receivers and remotes.
 local P = {}
@@ -136,8 +154,7 @@ end
 -- Smoothing: a simple low-pass filter over the decoded audio. DFPWM comes
 -- out as harsh little steps; rounding them off takes the fizz out of it at
 -- the cost of a bit of treble. Lower number = smoother.
-P.SMOOTH = { light = 0.6, strong = 0.35 }
-P.SMOOTH_NAMES = { "off", "light", "strong" }
+P.SMOOTH = { light = 0.6, strong = 0.6 } -- "strong" was dropped; it now means light
 
 -- Filters buf in place. "last" carries the filter on from the previous chunk
 -- so there's no click at the joins; returns the new value to pass next time.
@@ -160,6 +177,86 @@ function P.ok(msg, group, pin)
   return type(msg) == "table" and msg.group == group and tostring(msg.pin or "") == (pin or "")
 end
 
+---------------------------------------------------------------------------
+-- Updates from GitHub (no UI here, so the player, linked speakers and
+-- remotes can all use it)
+---------------------------------------------------------------------------
+P.REPO = "MADDXSTUDIOS/phoenix-music"
+P.FILE = "phoenixmusic.lua"
+
+-- Where this program lives, so updates and restarts go to the right file.
+P.self_path = (shell and shell.getRunningProgram and shell.getRunningProgram()) or P.FILE
+
+function P.rawUrl(name)
+  local channel = P.trim(settings.get("phoenix_music.update_channel"))
+  if channel == "" then channel = "main" end
+  -- The timestamp stops GitHub's cache handing us an old copy
+  return "https://raw.githubusercontent.com/" .. P.REPO .. "/" .. channel .. "/" .. name
+    .. "?t=" .. os.epoch("utc")
+end
+
+function P.fetch(url)
+  local ok, h = pcall(http.get, { url = url, binary = true })
+  if not ok or not h then return nil end
+  local body = h.readAll()
+  h.close()
+  return body
+end
+
+-- True if version a is newer than b ("3.10.0" beats "3.9.2").
+function P.newer(a, b)
+  local pa, pb = {}, {}
+  for n in tostring(a):gmatch("%d+") do pa[#pa + 1] = tonumber(n) end
+  for n in tostring(b):gmatch("%d+") do pb[#pb + 1] = tonumber(n) end
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x > y end
+  end
+  return false
+end
+
+-- Reads version.txt from the repo: the first line is the version, the rest
+-- is what's new. Returns { version, notes, newer } or nil and a reason.
+function P.checkUpdate()
+  local body = P.fetch(P.rawUrl("version.txt"))
+  if not body then return nil, "Couldn't reach GitHub" end
+  local lines = {}
+  for l in body:gmatch("[^\r\n]+") do lines[#lines + 1] = l end
+  local v = lines[1] and lines[1]:match("^%s*v?([%d%.]+)%s*$")
+  if not v then return nil, "Bad version file" end
+  table.remove(lines, 1)
+  return { version = v, notes = lines, newer = P.newer(v, APP.version) }
+end
+
+-- Downloads the latest version over this program, keeping the old one as a
+-- .bak. The download has to load cleanly first, so a bad upload can't break
+-- anyone's install.
+function P.installUpdate()
+  local code = P.fetch(P.rawUrl(P.FILE))
+  if not code or #code < 1000 then return false, "Download failed" end
+  if not load(code, "=" .. P.FILE, "t", {}) then return false, "The new version didn't pass its check" end
+  if not code:find("Phoenix Music", 1, true) then return false, "That download isn't Phoenix Music" end
+  local path = P.self_path
+  local backup = path .. ".bak"
+  if fs.exists(backup) then fs.delete(backup) end
+  if fs.exists(path) then fs.copy(path, backup) end
+  local f = fs.open(path, "wb")
+  if not f then return false, "Couldn't save the update" end
+  f.write(code)
+  f.close()
+  return true
+end
+
+-- Runs this program again (after an update, or to switch modes).
+function P.relaunch(list)
+  list = list or {}
+  if shell and shell.run then
+    shell.run(P.self_path, table.unpack(list))
+  else
+    os.run({ shell = shell }, P.self_path, table.unpack(list))
+  end
+end
+
 -- Opens rednet on every modem attached. Returns true if there was one.
 -- Most functions live in F: CC's Lua caps how many locals can be in scope.
 local F = {}
@@ -175,7 +272,8 @@ function F.openModems()
   return any
 end
 
--- Receiver mode: plays whatever the player in our group sends.
+-- Linked speaker mode: plays whatever the player on our Link sends.
+-- Returns "player" or "restart" if we should run again in another mode.
 function F.runReceiver(group, pin)
   local rx_speakers = { peripheral.find("speaker") }
   if #rx_speakers == 0 then
@@ -187,11 +285,14 @@ function F.runReceiver(group, pin)
 
   local decoder = dfpwm.make_decoder()
   local pending = {}               -- decoded chunks waiting for the speakers
+  local until_ms = nil             -- when the audio we've handed the speakers runs out
   local title, artist = nil, nil
   local last_audio = nil
   local typing = false
   local btns = {}                  -- clickable buttons on this screen
   local smooth_last = nil          -- low-pass filter state between chunks
+  local upd, note = nil, nil       -- newer version on GitHub; a one-line message
+  local result = nil               -- "player" / "restart" once we're asked to leave
   local rx_volume = math.max(0, math.min(150, tonumber(settings.get("phoenix_music.rx_volume")) or 100))
   local colourful = term.isColour()
   local accent = colourful and colours.orange or colours.white
@@ -212,7 +313,7 @@ function F.runReceiver(group, pin)
     term.setCursorPos(2, 5)
     if title then
       term.setTextColour(active and accent or colours.lightGrey)
-      term.write(active and "Playing" or "Idle")
+      term.write(active and "Playing" or "Last played")
       term.setCursorPos(2, 6)
       term.setTextColour(colours.white)
       term.write(tostring(title):sub(1, w - 2))
@@ -230,11 +331,20 @@ function F.runReceiver(group, pin)
     term.setTextColour(colours.lightGrey)
     term.write(#rx_speakers .. " speaker" .. (#rx_speakers == 1 and "" or "s"))
 
+    if note or upd then
+      term.setCursorPos(2, 12)
+      term.setTextColour(accent)
+      term.write((note or ("Update available: v" .. upd.version .. " - press u")):sub(1, w - 2))
+    end
+
     -- Buttons (advanced computers can click them) and the key help
     btns = {}
     if colourful then
+      local list = { { " Link ", "link" }, { " PIN ", "pin" }, { " - ", "down" }, { " + ", "up" } }
+      if upd then list[#list + 1] = { " Update ", "update" } end
+      list[#list + 1] = { " Player ", "player" }
       local x = 2
-      for _, b in ipairs({ { " Link ", "link" }, { " PIN ", "pin" }, { " - ", "down" }, { " + ", "up" } }) do
+      for _, b in ipairs(list) do
         if x + #b[1] - 1 <= w - 1 then
           term.setCursorPos(x, h - 2)
           term.setBackgroundColour(colours.grey)
@@ -259,16 +369,28 @@ function F.runReceiver(group, pin)
     if to then rednet.send(to, msg, PROTOCOL) else rednet.broadcast(msg, PROTOCOL) end
   end
 
+  -- Stop the speakers but keep the audio that's waiting, so we drop straight
+  -- back into step with everyone else (CC only takes a new volume when the
+  -- speaker starts afresh).
+  local function rejoin()
+    for _, s in ipairs(rx_speakers) do s.stop() end
+    until_ms = nil
+    for _, it in ipairs(pending) do it.done = {}; it.started = nil end
+    os.queueEvent("phoenix_rx")
+  end
+
   local function setRxVolume(v)
     rx_volume = math.max(0, math.min(150, math.floor(v + 0.5)))
     settings.set("phoenix_music.rx_volume", rx_volume)
     settings.save()
     hello()
+    rejoin()
     draw()
   end
 
   local function stopAll()
     pending = {}
+    until_ms = nil
     smooth_last = nil
     decoder = dfpwm.make_decoder()
     for _, s in ipairs(rx_speakers) do s.stop() end
@@ -284,12 +406,11 @@ function F.runReceiver(group, pin)
           title, artist = msg.name, msg.artist
           if not last_audio or os.clock() - last_audio >= 5 then changed = true end
           last_audio = os.clock()
-          local vol = math.min(3, (tonumber(msg.volume) or 1) * rx_volume / 100)
           local buf = decoder(msg.data)
           smooth_last = P.smooth(buf, msg.smoothing, smooth_last)
-          table.insert(pending, { buf = buf, vol = vol, at = tonumber(msg.at), done = {} })
-          -- If we've fallen behind, drop the oldest audio rather than lag forever
-          while #pending > 3 do table.remove(pending, 1) end
+          table.insert(pending, { buf = buf, vol = tonumber(msg.volume) or 1, at = tonumber(msg.at), done = {} })
+          -- If we've fallen well behind, drop the oldest audio rather than lag forever
+          while #pending > 4 do table.remove(pending, 1) end
           os.queueEvent("phoenix_rx")
           if changed then draw() end
         elseif msg.type == "stop" then
@@ -303,35 +424,56 @@ function F.runReceiver(group, pin)
     end
   end
 
-  -- Same idea as the player: hand each chunk to every speaker, waiting for
-  -- room. Tracks which speakers took it so none plays a chunk twice.
+  -- Every chunk says when it should start playing (on the server clock). When
+  -- we start from silence we wait for that moment - or, if we've joined late,
+  -- skip what everyone else has already played - so we're in step with the
+  -- player. After that, the speaker's own queue keeps us there.
   local function player()
     while true do
       local item = pending[1]
       if not item then
         os.pullEvent("phoenix_rx")
-      elseif item.at then
-        -- A fresh start: wait for the moment the player picked, so every
-        -- speaker in the group starts on the same tick.
-        local wait = (item.at - os.epoch("utc")) / 1000
-        item.at = nil
-        if wait > 0 then
-          local timer = os.startTimer(wait)
-          repeat
-            local ev, p = os.pullEvent()
-          until (ev == "timer" and p == timer) or pending[1] ~= item
-        end
       else
-        local all = true
-        for i, s in ipairs(rx_speakers) do
-          if not item.done[i] then
-            if s.playAudio(item.buf, item.vol) then item.done[i] = true else all = false end
+        local now = os.epoch("utc")
+        if until_ms and now > until_ms + 250 then until_ms = nil end -- we ran dry
+        local ready = true
+        if not until_ms and not item.started and item.at then
+          if item.at > now + 15 then
+            ready = false
+            local timer = os.startTimer((item.at - now) / 1000)
+            repeat
+              local ev, p = os.pullEvent()
+            until (ev == "timer" and p == timer) or pending[1] ~= item
+          elseif now - item.at > 30 then
+            local skip = math.floor((now - item.at) * 48) -- 48 samples per ms
+            if skip >= #item.buf then
+              ready = false
+              if pending[1] == item then table.remove(pending, 1) end
+            else
+              local cut = {}
+              for i = skip + 1, #item.buf do cut[#cut + 1] = item.buf[i] end
+              item.buf, item.at = cut, now
+            end
           end
         end
-        if all then
-          if pending[1] == item then table.remove(pending, 1) end
-        else
-          os.pullEvent() -- speaker_audio_empty, new audio or a stop
+        if ready and pending[1] == item then
+          local vol = math.min(3, item.vol * rx_volume / 100)
+          local all = true
+          for i, s in ipairs(rx_speakers) do
+            if not item.done[i] then
+              if s.playAudio(item.buf, vol) then item.done[i] = true else all = false end
+            end
+          end
+          if not item.started then
+            item.started = true
+            if not until_ms then until_ms = item.at or os.epoch("utc") end
+          end
+          if all then
+            until_ms = until_ms + #item.buf / 48
+            if pending[1] == item then table.remove(pending, 1) end
+          else
+            os.pullEvent() -- speaker_audio_empty, new audio or a stop
+          end
         end
       end
     end
@@ -341,11 +483,23 @@ function F.runReceiver(group, pin)
     while true do
       hello()
       sleep(5)
-      draw() -- flips Playing/Idle when the music stops
+      draw() -- flips Playing/Last played when the music stops
     end
   end
 
-  -- Typing on the bottom line (group name or PIN).
+  local function updater()
+    sleep(3)
+    while true do
+      local info = P.checkUpdate()
+      if info and info.newer then
+        upd = info
+        draw()
+      end
+      sleep(4 * 3600)
+    end
+  end
+
+  -- Typing on the bottom line (Link name or PIN).
   local function ask(label, mask)
     typing = true
     local _, h = term.getSize()
@@ -359,7 +513,10 @@ function F.runReceiver(group, pin)
     return v
   end
 
-  local KEYS = { q = "quit", ["+"] = "up", ["="] = "up", ["-"] = "down", ["_"] = "down", l = "link", p = "pin" }
+  local KEYS = {
+    q = "quit", ["+"] = "up", ["="] = "up", ["-"] = "down", ["_"] = "down",
+    l = "link", p = "pin", u = "update",
+  }
 
   local function keyLoop()
     while true do
@@ -374,10 +531,23 @@ function F.runReceiver(group, pin)
       end
       if action == "quit" then
         return
+      elseif action == "player" then
+        result = "player"
+        return
       elseif action == "up" then
         setRxVolume(rx_volume + 10)
       elseif action == "down" then
         setRxVolume(rx_volume - 10)
+      elseif action == "update" and upd then
+        note = "Updating..."
+        draw()
+        local ok, err = P.installUpdate()
+        if ok then
+          result = "restart"
+          return
+        end
+        note = "Update failed: " .. tostring(err)
+        draw()
       elseif action == "link" then
         local v = P.trim(ask("Link name (now " .. group .. "): ")):sub(1, 24)
         if v ~= "" and v ~= group then
@@ -401,13 +571,14 @@ function F.runReceiver(group, pin)
   end
 
   draw()
-  local ok, err = pcall(parallel.waitForAny, net, player, heartbeat, keyLoop)
+  local ok, err = pcall(parallel.waitForAny, net, player, heartbeat, keyLoop, updater)
   for _, s in ipairs(rx_speakers) do s.stop() end
   term.setBackgroundColour(colours.black)
   term.setTextColour(colours.white)
   term.clear()
   term.setCursorPos(1, 1)
   if not ok and err ~= "Terminated" then printError(err) end
+  return result
 end
 
 ---------------------------------------------------------------------------
@@ -422,15 +593,17 @@ if shell and shell.getRunningProgram then
 end
 
 if args[1] == "link" or args[1] == "receiver" then -- "receiver" was the old name
-  F.runReceiver(args[2] or settings.get("phoenix_music.group"), P.trim(settings.get("phoenix_music.pin")))
+  local r = F.runReceiver(args[2] or settings.get("phoenix_music.group"), P.trim(settings.get("phoenix_music.pin")))
+  if r == "player" then P.relaunch({ "player" }) elseif r == "restart" then P.relaunch(args) end
   return
 end
 
 local remote_mode = args[1] == "remote"
+local force_player = args[1] == "player"   -- skips the "no speaker here" choice
 local parent = term.current()
 local monitor_name = nil
 
-if args[1] and not remote_mode then
+if args[1] and not remote_mode and not force_player then
   local mon = peripheral.wrap(args[1])
   if not mon or peripheral.getType(args[1]) ~= "monitor" then
     error("'" .. args[1] .. "' isn't a monitor.", 0)
@@ -450,6 +623,14 @@ local group = settings.get("phoenix_music.group")
 local pin = P.trim(settings.get("phoenix_music.pin"))
 local receivers = {}               -- [computer id] = { label, speakers, volume, seen }
 
+-- A computer with no speaker but a modem can be a remote instead. Once
+-- someone picks that, it starts as a remote from then on.
+local ask_nospeaker = false
+if not remote_mode and not force_player and not monitor_name and #speakers == 0 and wireless then
+  local choice = settings.get("phoenix_music.nospeaker_mode")
+  if choice == "remote" then remote_mode = true
+  elseif choice ~= "player" then ask_nospeaker = true end
+end
 if remote_mode and not wireless then
   error("The remote needs a wireless or ender modem.", 0)
 end
@@ -547,9 +728,19 @@ local X = {
   MAX_LEN = 15 * 60,               -- the server can't convert videos longer than this
   error_text = nil,                -- why the last song failed
   skip_at = nil,                   -- auto-skip to the next song after a failure
+  cache = {},                      -- songs downloaded this session: { id, data }
+  CACHE_MAX = 4,                   -- songs kept in memory
+  CACHE_BYTES = 6 * 1024 * 1024,   -- and at most this much audio
+  start_at = nil,                  -- when the next song should start (gapless)
+  vol_dirty_at = nil,              -- re-apply the volume at this time (CC needs a restart)
+  upd = { state = "idle" },        -- update check: idle/checking/none/available/error/installing/installed
+  upd_offered = false,             -- asked about this update already this session
+  switch_to = nil,                 -- args to run again with when we quit (mode switch / update)
+  progress_row = 7,                -- where the progress bar is this frame
+  all_results = nil,               -- search results before hiding long videos
 }
 
--- Length in seconds from an artist line like "3:33 · Alan Walker".
+-- Length in seconds from an artist line like "3:33 - Alan Walker".
 function X.durationOf(item)
   if type(item) ~= "table" then return nil end
   local a, b, c = tostring(item.artist or ""):match("^(%d+):(%d+):?(%d*)")
@@ -608,6 +799,28 @@ function F.addHit(x, y, w, h, fn)
   hits[#hits + 1] = { x = x, y = y, w = w, h = h, fn = fn }
 end
 
+function F.addHitFirst(x, y, w, h, fn)
+  table.insert(hits, 1, { x = x, y = y, w = w, h = h, fn = fn })
+end
+
+-- Tappable scroll arrows (monitors have no scroll wheel).
+function F.scrollArrows(key, top, maxScroll, page)
+  if scroll[key] > 0 then
+    text(W, top, G.up, C.accent, C.bg)
+    F.addHitFirst(W - 1, top, 2, 1, function()
+      scroll[key] = math.max(0, scroll[key] - page)
+      F.redraw()
+    end)
+  end
+  if scroll[key] < maxScroll then
+    text(W, H, G.down, C.accent, C.bg)
+    F.addHitFirst(W - 1, H, 2, 1, function()
+      scroll[key] = math.min(maxScroll, scroll[key] + page)
+      F.redraw()
+    end)
+  end
+end
+
 function F.button(x, y, label, fg, bg, fn)
   text(x, y, label, fg, bg)
   if fn then F.addHit(x, y, #label, 1, fn) end
@@ -621,7 +834,7 @@ end
 function F.elapsedBytes()
   local pos = anchor_pos
   if clock_running then
-    pos = anchor_pos + (F.now_ms() - anchor_time) * BYTES_PER_SEC / 1000
+    pos = anchor_pos + math.max(0, F.now_ms() - anchor_time) * BYTES_PER_SEC / 1000
     if pos > byte_pos then pos = byte_pos end
   end
   if total_bytes and pos > total_bytes then pos = total_bytes end
@@ -680,6 +893,158 @@ function F.closeHandle()
 end
 
 function F.redraw() os.queueEvent("redraw_screen") end
+
+---------------------------------------------------------------------------
+-- Song cache: the last few songs stay in memory, so replaying, going back,
+-- looping the queue or picking from Recently played starts straight away.
+---------------------------------------------------------------------------
+function X.cacheGet(id)
+  for i, c in ipairs(X.cache) do
+    if c.id == id then
+      table.remove(X.cache, i)
+      table.insert(X.cache, c) -- most recently used goes last
+      return c.data
+    end
+  end
+end
+
+function X.cachePut(id, data)
+  for i = #X.cache, 1, -1 do
+    if X.cache[i].id == id then table.remove(X.cache, i) end
+  end
+  table.insert(X.cache, { id = id, data = data })
+  local total = 0
+  for _, c in ipairs(X.cache) do total = total + #c.data end
+  while #X.cache > 1 and (#X.cache > X.CACHE_MAX or total > X.CACHE_BYTES) do
+    total = total - #X.cache[1].data
+    table.remove(X.cache, 1)
+  end
+end
+
+-- A file-like handle over a string, so a song plays (and seeks) the same
+-- whether it was just downloaded or came from the cache.
+function X.memHandle(data)
+  local pos = 0
+  local h = {}
+  function h.read(n)
+    if pos >= #data then return nil end
+    local chunk = data:sub(pos + 1, pos + (n or 1))
+    pos = pos + #chunk
+    return chunk
+  end
+  function h.seek(whence, offset)
+    offset = offset or 0
+    if whence == "end" then pos = #data + offset
+    elseif whence == "cur" then pos = pos + offset
+    else pos = offset end
+    pos = math.max(0, math.min(pos, #data))
+    return pos
+  end
+  function h.close() end
+  return h
+end
+
+-- Starts the current song from its audio (downloaded or cached).
+function X.openAudio(data)
+  is_loading = false
+  player_handle = X.memHandle(data)
+  total_bytes, seekable = #data, true
+  byte_pos, anchor_pos = 0, 0
+  clock_running, need_anchor = false, true
+  decoder = dfpwm.make_decoder()
+  -- Picking up a saved track: jump to where we left off.
+  if resume_bytes and resume_bytes < total_bytes then
+    player_handle.seek("set", resume_bytes)
+    byte_pos, anchor_pos = resume_bytes, resume_bytes
+  end
+  resume_bytes = nil
+  playing_status = 1
+  needs_next_chunk = 1
+  F.redraw()
+  os.queueEvent("audio_update")
+end
+
+-- Waits until the server clock reaches t (ms), unless playback is stopped.
+function X.waitUntil(t)
+  local wait = (t - F.now_ms()) / 1000
+  if wait > 0 then
+    parallel.waitForAny(
+      function() sleep(wait) end,
+      function() os.pullEvent("playback_stopped") end
+    )
+  end
+end
+
+---------------------------------------------------------------------------
+-- Tidying titles: CC's font only has Latin characters, so emoji and other
+-- scripts turned into "?????". Search results are fetched as raw bytes and
+-- decoded here instead, so we know which characters can't be shown.
+---------------------------------------------------------------------------
+X.PUNCT = {
+  [0x2018] = "'", [0x2019] = "'", [0x201C] = "'", [0x201D] = "'",
+  [0x2013] = "-", [0x2014] = "-", [0x2022] = "-", [0x2026] = "...",
+}
+local UNSHOWN = "\127" -- stands in for a character CC can't draw
+
+function X.fromUtf8(s)
+  local out, i, n = {}, 1, #s
+  while i <= n do
+    local b = s:byte(i)
+    local cp, len
+    if b < 0x80 then
+      cp, len = b, 1
+    elseif b >= 0xF0 then
+      cp, len = nil, 4
+    elseif b >= 0xE0 then
+      local b2, b3 = s:byte(i + 1) or 0, s:byte(i + 2) or 0
+      cp, len = (b % 16) * 4096 + (b2 % 64) * 64 + (b3 % 64), 3
+    elseif b >= 0xC0 then
+      cp, len = (b % 32) * 64 + ((s:byte(i + 1) or 0) % 64), 2
+    else
+      cp, len = nil, 1
+    end
+    if cp and cp < 256 then out[#out + 1] = string.char(cp)
+    elseif cp and X.PUNCT[cp] then out[#out + 1] = X.PUNCT[cp]
+    else out[#out + 1] = UNSHOWN end
+    i = i + len
+  end
+  return table.concat(out)
+end
+
+function X.cleanText(s)
+  s = tostring(s or ""):gsub(UNSHOWN .. "+", " "):gsub("%?%?+", " "):gsub("  +", " ")
+  return F.trim(s)
+end
+
+-- Makes a result readable: strips what CC can't show, and if the title is
+-- (almost) all foreign script, calls it "Video from <channel>" instead.
+function X.tidyItem(r)
+  if type(r) ~= "table" then return end
+  local raw = tostring(r.name or "")
+  local mangled = raw:find(UNSHOWN, 1, true) or raw:find("??", 1, true)
+  r.name, r.artist = X.cleanText(r.name), X.cleanText(r.artist)
+  local dur, chan = r.artist:match("^([%d:]+)%s*\183%s*(.*)$")
+  if dur and chan == "" then
+    chan = "unknown channel"
+    r.artist = dur .. " \183 Unknown channel"
+  end
+  local _, letters = r.name:gsub("%w", "")
+  if letters < 3 and (mangled or r.name == "") then r.name = "Video from " .. (chan or "unknown channel") end
+  if type(r.playlist_items) == "table" then
+    for _, it in ipairs(r.playlist_items) do X.tidyItem(it) end
+  end
+end
+
+-- What the search tab shows: everything, or without the long videos.
+function X.filterResults()
+  if not X.all_results then return end
+  local hide = settings.get("phoenix_music.hide_long")
+  search_results = {}
+  for _, r in ipairs(X.all_results) do
+    if not (hide and r.too_long) then search_results[#search_results + 1] = r end
+  end
+  X.hidden_count = #X.all_results - #search_results
+end
 
 -- Takes the next song off the queue: the first, or a random one in shuffle mode.
 function X.takeNext()
@@ -772,11 +1137,17 @@ function F.pushHistory(item)
   if #history > HISTORY_MAX then table.remove(history, 1) end
 end
 
--- Switch to a track and start it from the top.
-function F.loadTrack(item)
+-- Switch to a track and start it from the top. start_at is set when the last
+-- song ended by itself: the speakers are still playing its tail end, so we
+-- carry straight on from there instead of cutting them off.
+function F.loadTrack(item, start_at)
   resume_bytes = nil
   audio_gen = audio_gen + 1
-  F.stopSpeakers()
+  if start_at then
+    X.sync_start, X.start_at = true, start_at
+  else
+    F.stopSpeakers()
+  end
   F.closeHandle()
   now_playing = item
   playing_id = nil
@@ -853,20 +1224,18 @@ function F.togglePause()
   if playing and not paused then pause() else F.resume() end
 end
 
+-- Stop ends the current song. The queue stays put; play starts the next
+-- song and previous brings this one back.
 local function stop()
   if not now_playing then return end
-  if player_handle and seekable then
-    pause()
-    F.seekBytes(0)
-    stopped = true
-  else
-    audio_gen = audio_gen + 1
-    F.stopSpeakers()
-    F.closeHandle()
-    playing, paused, stopped = false, false, false
-    playing_id = nil
-    is_loading = false
-  end
+  audio_gen = audio_gen + 1
+  F.stopSpeakers()
+  F.closeHandle()
+  F.pushHistory(now_playing)
+  now_playing, playing_id = nil, nil
+  playing, paused, stopped = false, false, false
+  is_loading, is_error = false, false
+  resume_bytes, X.error_text, X.skip_at = nil, nil, nil
   F.redraw()
 end
 
@@ -919,14 +1288,25 @@ function F.onTrackEnd()
     F.redraw()
     return
   end
+  -- When the audio we've already handed the speakers runs out
+  local end_at = anchor_time + (byte_pos - anchor_pos) * 1000 / BYTES_PER_SEC
   if looping == 2 or (looping == 1 and #queue == 0) then
-    if not F.seekBytes(0) then F.loadTrack(now_playing) end
+    -- Go round again without stopping the speakers
+    if player_handle and pcall(player_handle.seek, "set", 0) then
+      byte_pos = 0
+      decoder = dfpwm.make_decoder()
+      X.sync_start, X.start_at = true, end_at
+      needs_next_chunk = 1
+      os.queueEvent("audio_update")
+    else
+      F.loadTrack(now_playing, end_at)
+    end
     return
   end
   if looping == 1 then table.insert(queue, now_playing) end
   F.pushHistory(now_playing)
   if #queue > 0 then
-    F.loadTrack(X.takeNext())
+    F.loadTrack(X.takeNext(), end_at)
   else
     F.closeHandle()
     now_playing, playing_id = nil, nil
@@ -936,9 +1316,19 @@ function F.onTrackEnd()
   end
 end
 
+-- CC's speakers only take a new volume when they start afresh, so after a
+-- change (once you've stopped fiddling with it) we quietly pick the song
+-- straight back up from the same spot.
 function F.setVolume(v)
   volume = math.max(0, math.min(VOLUME_MAX, v))
   muted = false
+  X.vol_dirty_at = F.now_ms() + 700
+  F.redraw()
+end
+
+function F.toggleMute()
+  muted = not muted
+  X.vol_dirty_at = F.now_ms() + 300
   F.redraw()
 end
 
@@ -1210,11 +1600,11 @@ end
 ---------------------------------------------------------------------------
 local TAB_NAMES_LONG = { "Now Playing", "Search", "Queue", "Settings", "About" }
 local TAB_NAMES_MID = { "Playing", "Search", "Queue", "Settings", "About" }
-local TAB_NAMES_SHORT = { "Now", "Find", "Queue", "Set", "About" }
+local TAB_NAMES_SHORT = { "Now", "Find", "Queue", "Set" } -- About lives in Settings here
 
 function F.drawTabs()
   F.fill(1, 1, W, 1, C.panel)
-  local names = (W >= 60 and TAB_NAMES_LONG) or (W >= 44 and TAB_NAMES_MID) or TAB_NAMES_SHORT
+  local names = (W >= 60 and TAB_NAMES_LONG) or (W >= 34 and TAB_NAMES_MID) or TAB_NAMES_SHORT
   local slot = W / #names
   for i, name in ipairs(names) do
     local label = name
@@ -1225,7 +1615,7 @@ function F.drawTabs()
     local x1 = math.floor(slot * (i - 1)) + 1
     local x2 = math.floor(slot * i)
     local lx = x1 + math.floor((x2 - x1 + 1 - #label) / 2)
-    if i == tab then
+    if i == tab or (i == 4 and tab == 5 and #names == 4) then
       F.fill(x1, 1, x2 - x1 + 1, 1, C.bg)
       text(lx, 1, label, C.accent, C.bg)
     else
@@ -1398,6 +1788,9 @@ local ICONS = {
   },
 }
 local BTN_W, BTN_H = 5, 3
+
+-- Narrow screens (pocket computers) get the buttons on two rows and tighter spacing.
+function X.compact() return W < 7 * BTN_W + 6 + 2 end
 local BIT = { 1, 2, 4, 8, 16, 32 }
 
 -- Draw a pixel grid ("#" = on) using teletext characters (2x3 pixels each).
@@ -1463,7 +1856,7 @@ function F.drawControls(y)
     or { ICONS.shuffle, C.muted, C.btn, X.toggleShuffle }
 
   local transport = {
-    { ICONS.prev, C.text, C.btn, F.prevTrack, has },
+    { ICONS.prev, C.text, C.btn, F.prevTrack, has or #history > 0 },
     { isPlaying and ICONS.pause or ICONS.play, C.bg, C.accent, F.togglePause, has },
     { ICONS.stop, C.text, C.btn, stop, has },
     { ICONS.next, C.text, C.btn, F.nextTrack, has },
@@ -1500,7 +1893,7 @@ function F.drawVolume(y)
     x = x + bw + 1
   end
   x = x + F.button(x, y, " + ", C.text, C.btn, function() F.setVolume(volume + VOLUME_STEP) end) + 1
-  F.button(x, y, pctLabel, C.muted, C.bg, function() muted = not muted; F.redraw() end)
+  F.button(x, y, pctLabel, C.muted, C.bg, F.toggleMute)
 end
 
 function F.drawNowPlaying()
@@ -1527,13 +1920,15 @@ function F.drawNowPlaying()
     text(2, 4, F.trunc("Pick something in Search", W - 2), C.text, C.bg)
   end
 
-  F.drawProgress(7)
-  local vy = F.drawControls(9)
+  local compact = X.compact()
+  X.progress_row = compact and 6 or 7
+  F.drawProgress(X.progress_row)
+  local vy = F.drawControls(compact and 7 or 9)
   volume_row = vy
   F.drawVolume(vy)
 
   -- Up next / Visualiser: tap the heading to switch between them
-  local y = vy + 2
+  local y = vy + (compact and 1 or 2)
   if y > H then return end
   local upLabel, vizLabel = "Up next", "Visualiser"
   text(2, y, upLabel, X.viz and C.muted or C.text, C.bg)
@@ -1593,8 +1988,7 @@ function F.drawList(tabIndex, list, y0, onClick, decorate)
       F.addHit(1, y, W, 2, function() onClick(i, it) end)
     end
   end
-  if scroll[tabIndex] > 0 then text(W, y0, G.up, C.accent, C.bg) end
-  if scroll[tabIndex] < maxScroll then text(W, H, G.down, C.accent, C.bg) end
+  F.scrollArrows(tabIndex, y0, maxScroll, math.max(1, rows - 1))
 end
 
 -- Word-wrap a string to width w.
@@ -1922,7 +2316,7 @@ function F.drawAbout()
   para("The music server is free but costs terreng money to run. Support it: patreon.com/exclamatory", C.accent)
   gap()
 
-  line(APP.name .. " " .. APP.version .. "  -  " .. W .. "x" .. H, C.muted)
+  line("v" .. APP.version .. "  " .. W .. "x" .. H, C.muted)
 
   -- Scrolling: clamp, and show arrows when there's more
   local maxScroll = math.max(0, (y - 1) - H + scroll[5])
@@ -1930,8 +2324,7 @@ function F.drawAbout()
     scroll[5] = maxScroll
     F.redraw()
   end
-  if scroll[5] > 0 then text(W, top, G.up, C.accent, C.bg) end
-  if scroll[5] < maxScroll then text(W, H, G.down, C.accent, C.bg) end
+  F.scrollArrows(5, top, maxScroll, math.max(1, H - top))
 end
 
 function F.drawModal()
@@ -2020,7 +2413,7 @@ function F.handleChar(ch)
   elseif ch == "s" then stop()
   elseif ch == "r" then restart()
   elseif ch == "l" then F.cycleLoop()
-  elseif ch == "m" then muted = not muted; F.redraw()
+  elseif ch == "m" then F.toggleMute()
   elseif ch == "f" then F.toggleFavourite(now_playing)
   elseif ch == "h" then X.toggleShuffle()
   elseif ch == "v" then X.viz = not X.viz; F.redraw()
@@ -2052,7 +2445,7 @@ function F.doSearchInput()
       if #input > 0 then
         last_search = input
         last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
-        http.request(last_search_url)
+        http.request({ url = last_search_url, binary = true })
         search_results = nil
         search_error = false
         open_playlist = nil
@@ -2125,13 +2518,15 @@ function F.uiLoop()
       F.doPrompt()
     else
       local ev, a, b, c = os.pullEvent()
-      if ev == "mouse_click" and a == 1 then
+      if ev == "phoenix_quit" then
+        return
+      elseif ev == "mouse_click" and a == 1 then
         F.handleClick(b, c)
       elseif ev == "monitor_touch" and a == monitor_name then
         F.handleClick(b, c)
       elseif ev == "mouse_drag" and a == 1 and not modal then
         -- Dragging along the progress or volume bar scrubs it
-        if (tab == 1 and (c == 7 or c == volume_row)) then F.handleClick(b, c) end
+        if (tab == 1 and (c == X.progress_row or c == volume_row)) then F.handleClick(b, c) end
       elseif ev == "mouse_scroll" and scroll[tab] and not modal then
         scroll[tab] = math.max(0, scroll[tab] + a)
         F.redraw()
@@ -2157,46 +2552,26 @@ end
 -- speaker.playAudio, waiting on speaker_audio_empty / playback_stopped)
 ---------------------------------------------------------------------------
 function F.feedSpeakers(buffer, still_valid)
-  -- No speakers here (wireless only): pace ourselves by the clock instead.
-  -- The first two chunks go straight out so receivers have one buffered.
-  if #speakers == 0 then
-    if net_primed then
-      parallel.waitForAny(
-        function() sleep(#buffer / 48000) end,
-        function() os.pullEvent("playback_stopped") end
-      )
-    end
-    net_primed = true
-    return true
-  end
+  -- No speaker here: the audio loop paces itself off the clock instead.
+  if #speakers == 0 then return true end
 
+  -- Every speaker waits until it has room for this chunk, so none of them
+  -- skips audio (that matters when one song runs straight into the next and
+  -- the speakers are still finishing the last one).
   local fn = {}
   for i, speaker in ipairs(speakers) do
     fn[i] = function()
       local name = peripheral.getName(speaker)
-      if #speakers > 1 then
-        if speaker.playAudio(buffer, F.effectiveVolume()) then
-          parallel.waitForAny(
-            function()
-              repeat until select(2, os.pullEvent("speaker_audio_empty")) == name
-            end,
-            function()
-              os.pullEvent("playback_stopped")
-            end
-          )
-        end
-      else
-        while not speaker.playAudio(buffer, F.effectiveVolume()) do
-          parallel.waitForAny(
-            function()
-              repeat until select(2, os.pullEvent("speaker_audio_empty")) == name
-            end,
-            function()
-              os.pullEvent("playback_stopped")
-            end
-          )
-          if not still_valid() then return end
-        end
+      while not speaker.playAudio(buffer, F.effectiveVolume()) do
+        parallel.waitForAny(
+          function()
+            repeat until select(2, os.pullEvent("speaker_audio_empty")) == name
+          end,
+          function()
+            os.pullEvent("playback_stopped")
+          end
+        )
+        if not still_valid() then return end
       end
     end
   end
@@ -2209,12 +2584,18 @@ function F.audioLoop()
       local this_id = now_playing.id
       if playing_id ~= this_id then
         playing_id = this_id
-        last_download_url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(playing_id)
         playing_status = 0
         needs_next_chunk = 1
-        http.request({ url = last_download_url, binary = true })
-        is_loading = true
-        F.redraw()
+        local cached = X.cacheGet(this_id)
+        if cached then
+          last_download_url = nil
+          X.openAudio(cached)
+        else
+          last_download_url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(playing_id)
+          http.request({ url = last_download_url, binary = true })
+          is_loading = true
+          F.redraw()
+        end
       elseif playing_status == 1 and needs_next_chunk == 1 then
         local my_gen = audio_gen
         local function still_valid()
@@ -2235,23 +2616,33 @@ function F.audioLoop()
           X.smooth_last = P.smooth(buffer, settings.get("phoenix_music.smoothing"), X.smooth_last)
           X.rememberBuffer(chunk_start, buffer)
 
-          -- First chunk after a start, skip, pause or seek: pick a moment just
-          -- ahead for everyone (us and the receivers) to begin, so all the
-          -- speakers in the group start on the same tick.
-          local at = nil
-          if X.sync_start then
+          -- When this chunk should start playing, on the server clock. A fresh
+          -- start (play, skip, seek, pause) picks a moment just ahead so every
+          -- speaker - ours and linked ones - starts on the same tick; after
+          -- that each chunk follows straight on from the last. Linked
+          -- speakers use these times to start (or join) in step.
+          local fresh, natural = X.sync_start, false
+          local at
+          if fresh then
             X.sync_start = false
-            if wireless and F.activeReceivers() > 0 then at = F.now_ms() + SYNC_LEAD end
+            local linked = wireless and F.activeReceivers() > 0
+            at = F.now_ms() + (linked and SYNC_LEAD or 0)
+            if X.start_at and X.start_at > at then at, natural = X.start_at, true end
+            X.start_at = nil
+            anchor_pos, anchor_time, clock_running, need_anchor = chunk_start, at, true, false
+          else
+            at = anchor_time + (chunk_start - anchor_pos) * 1000 / BYTES_PER_SEC
+          end
+
+          if #speakers == 0 then
+            -- No speaker here to set the pace: keep a few seconds ahead of
+            -- the linked speakers, timed off the clock.
+            X.waitUntil(at - LEAD_AHEAD)
+            if not still_valid() then break end
           end
           F.broadcastChunk(chunk, at)
-          if at then
-            local wait = (at - F.now_ms()) / 1000
-            if wait > 0 then
-              parallel.waitForAny(
-                function() sleep(wait) end,
-                function() os.pullEvent("playback_stopped") end
-              )
-            end
+          if fresh and not natural and #speakers > 0 then
+            X.waitUntil(at)
             if not still_valid() then break end
           end
 
@@ -2264,12 +2655,6 @@ function F.audioLoop()
           end
 
           if not still_valid() then break end
-
-          if need_anchor then
-            need_anchor = false
-            anchor_pos, anchor_time = chunk_start, F.now_ms()
-            clock_running = true
-          end
         end
       end
     end
@@ -2282,7 +2667,7 @@ function F.httpLoop()
     local ev, url, handle = os.pullEvent()
     if ev == "http_success" then
       if url == last_search_url then
-        search_results = textutils.unserialiseJSON(handle.readAll())
+        search_results = textutils.unserialiseJSON(X.fromUtf8(handle.readAll() or ""))
         handle.close()
         if type(search_results) ~= "table" then
           search_results, search_error = nil, true
@@ -2295,48 +2680,23 @@ function F.httpLoop()
             if type(r) == "table" and r.id then
               local blob = tostring(r.name or "") .. " " .. tostring(r.artist or "")
               if not blob:lower():find("patreon", 1, true) then
+                X.tidyItem(r)
                 r.too_long = r.type ~= "playlist" and X.tooLong(r)
                 real[#real + 1] = r
               end
             end
           end
-          search_results = real
+          X.all_results = real
+          X.filterResults()
         end
         F.redraw()
       elseif url == last_download_url and playing_status == 0 then
-        is_loading = false
-        player_handle = handle
-        byte_pos, anchor_pos = 0, 0
-        clock_running, need_anchor = false, true
-        decoder = dfpwm.make_decoder()
-
-        -- Work out the length (and whether we can seek) if the handle allows it.
-        total_bytes, seekable = nil, false
-        local ok, size = pcall(handle.seek, "end")
-        if ok and type(size) == "number" and pcall(handle.seek, "set", 0) then
-          total_bytes, seekable = size, true
-        else
-          local hok, headers = pcall(handle.getResponseHeaders)
-          if hok and headers then
-            local len = headers["Content-Length"] or headers["content-length"]
-            total_bytes = tonumber(len)
-          end
-        end
-
-        -- Picking up a saved track: jump to where we left off.
-        if resume_bytes and seekable and resume_bytes < total_bytes then
-          if pcall(handle.seek, "set", resume_bytes) then
-            byte_pos, anchor_pos = resume_bytes, resume_bytes
-          end
-        end
-        resume_bytes = nil
-
-        playing_status = 1
-        needs_next_chunk = 1
-        F.redraw()
-        os.queueEvent("audio_update")
-      else
-        pcall(handle.close)
+        local data = handle.readAll() or ""
+        handle.close()
+        if now_playing and now_playing.id then X.cachePut(now_playing.id, data) end
+        X.openAudio(data)
+      elseif type(url) == "string" and url:sub(1, #api_base_url) == api_base_url then
+        pcall(handle.close) -- an old request we no longer want
       end
     elseif ev == "http_failure" then
       if url == last_search_url then
@@ -2395,6 +2755,15 @@ function F.tickLoop()
     sleep(0.5)
     if tab == 1 and not modal and playing and not paused then F.redraw() end
     pcall(F.saveState)
+
+    -- Volume changed: pick the song back up at the same spot so it applies
+    if X.vol_dirty_at and F.now_ms() >= X.vol_dirty_at then
+      X.vol_dirty_at = nil
+      if playing and not paused and playing_status == 1 then
+        pause()
+        F.resume()
+      end
+    end
 
     -- After a song fails to load, move on to the next one
     if X.skip_at and F.now_ms() >= X.skip_at then
@@ -2768,42 +3137,130 @@ function X.themeMenu(kind)
   F.redraw()
 end
 
-function X.smoothMenu()
-  local current = settings.get("phoenix_music.smoothing")
-  local labels = {
-    off = "Off (original sound)",
-    light = "Light (less fizz)",
-    strong = "Strong (softest, duller)",
+---------------------------------------------------------------------------
+-- Switching modes and updating
+---------------------------------------------------------------------------
+-- Quits and runs again with these arguments (e.g. { "remote" }).
+function X.switchMode(list)
+  X.switch_to = list or {}
+  os.queueEvent("phoenix_quit")
+end
+
+function X.confirmSwitch(mode)
+  modal = {
+    title = mode == "remote" and "Use this as a remote?" or "Use this as a linked speaker?",
+    sub = "Music playing here will stop",
+    options = { { "Switch", function() X.switchMode({ mode }) end } },
   }
-  local opts = {}
-  for _, name in ipairs(P.SMOOTH_NAMES) do
-    opts[#opts + 1] = { (name == current and (G.dot .. " ") or "  ") .. labels[name], function()
-      settings.set("phoenix_music.smoothing", name)
-      settings.save()
-    end }
-  end
-  modal = { title = "Audio smoothing", sub = "Takes the edge off CC's crunchy audio", options = opts }
   F.redraw()
+end
+
+function X.requestCheck() os.queueEvent("phoenix_update", "check", true) end
+function X.requestInstall() os.queueEvent("phoenix_update", "install") end
+
+function X.offerUpdate()
+  local u = X.upd
+  if u.state ~= "available" or remote_mode then return end
+  modal = {
+    title = "Update available: v" .. u.version,
+    sub = "You have v" .. APP.version,
+    options = {
+      { "Update now", X.requestInstall },
+      { "What's new", function() X.showNotes() end },
+    },
+  }
+  F.redraw()
+end
+
+function X.showNotes()
+  local opts = {}
+  for _, n in ipairs(X.upd.notes or {}) do opts[#opts + 1] = { n, X.offerUpdate } end
+  if #opts == 0 then opts[1] = { "No notes for this one", X.offerUpdate } end
+  modal = { title = "What's new in v" .. tostring(X.upd.version), sub = "Tap a line to go back", options = opts }
+  F.redraw()
+end
+
+-- Checks GitHub when the app opens and whenever someone asks; installs on request.
+function X.updateLoop()
+  sleep(2)
+  os.queueEvent("phoenix_update", "check", false)
+  while true do
+    local _, what, manual = os.pullEvent("phoenix_update")
+    if what == "check" and X.upd.state ~= "installing" then
+      X.upd = { state = "checking" }
+      F.redraw()
+      local info, err = P.checkUpdate()
+      if not info then
+        X.upd = { state = "error", err = err }
+      elseif info.newer then
+        X.upd = { state = "available", version = info.version, notes = info.notes }
+        -- Ask once when the app opens, and again whenever someone checks by hand
+        if (manual or not X.upd_offered) and not modal and not prompt and not waiting_for_input then
+          X.upd_offered = true
+          X.offerUpdate()
+        end
+      else
+        X.upd = { state = "none" }
+      end
+      F.redraw()
+    elseif what == "install" and X.upd.state == "available" then
+      local u = X.upd
+      X.upd = { state = "installing", version = u.version, notes = u.notes }
+      F.redraw()
+      local ok, err = P.installUpdate()
+      if ok then
+        X.upd = { state = "installed", version = u.version }
+        if not remote_mode then
+          modal = {
+            title = "Updated to v" .. u.version,
+            sub = "Restart to start using it",
+            options = { { "Restart now", function() X.switchMode(args) end } },
+          }
+        end
+      else
+        X.upd = { state = "available", version = u.version, notes = u.notes }
+        if not remote_mode then
+          modal = { title = "Update failed", sub = tostring(err), options = { { "Try again", X.requestInstall } } }
+        end
+      end
+      F.redraw()
+    end
+  end
 end
 
 function X.drawSettings()
   local top = 3
   local y = top - scroll[4]
+  local narrow = W < 40
+  local BW = narrow and 8 or 10 -- every button on this page is the same width
   local function visible(row) return row >= top and row <= H end
   local function line(str, fg)
-    if visible(y) then text(2, y, F.trunc(str, W - 2), fg, C.bg) end
+    if visible(y) then text(2, y, F.trunc(str, W - 3), fg, C.bg) end
     y = y + 1
   end
   local function para(str, fg)
-    for _, l in ipairs(F.wrap(str, W - 2)) do line(l, fg) end
+    for _, l in ipairs(F.wrap(str, W - 3)) do line(l, fg) end
+  end
+  local function btn(label, fn, fg, bg)
+    local pad = BW - #label
+    local l = string.rep(" ", math.floor(pad / 2)) .. label .. string.rep(" ", pad - math.floor(pad / 2))
+    F.button(W - BW, y, l, fg or C.text, bg or C.btn, fn)
   end
   -- "Label: value" on the left, a button on the right
-  local function row(label, value, btn, fn, valueCol)
+  local function row(label, value, b, fn, valueCol)
     if visible(y) then
-      local bl = " " .. btn .. " "
-      text(2, y, F.trunc(label, W - 3 - #bl), C.muted, C.bg)
-      text(2 + #label, y, F.trunc(value, W - 3 - #bl - #label), valueCol or C.text, C.bg)
-      F.button(W - #bl, y, bl, C.text, C.btn, fn)
+      local room = W - 2 - BW - 1
+      text(2, y, F.trunc(label, room), C.muted, C.bg)
+      if #label < room then text(2 + #label, y, F.trunc(value, room - #label), valueCol or C.text, C.bg) end
+      btn(b, fn)
+    end
+    y = y + 1
+  end
+  -- A switch: the button shows (and flips) the state
+  local function toggle(label, on, fn, onText, offText)
+    if visible(y) then
+      text(2, y, F.trunc(label, W - 3 - BW), C.muted, C.bg)
+      btn(on and (onText or "On") or (offText or "Off"), fn, on and C.bg or C.text, on and C.accent or C.btn)
     end
     y = y + 1
   end
@@ -2816,12 +3273,13 @@ function X.drawSettings()
       F.askText("New Link name (now " .. group .. ")", "", F.setGroup)
     end)
     row("PIN: ", pin == "" and "none" or string.rep("*", #pin), "PIN", X.pinMenu)
-    line("This computer: " .. #speakers .. " speaker" .. (#speakers == 1 and "" or "s"), C.muted)
+    line("Speakers here: " .. #speakers, C.muted)
     local rx, rxSpk = F.activeReceivers()
     if rx == 0 then
       para("Nothing linked yet. Run '" .. CMD .. " link' on another computer with a speaker and a modem.", C.muted)
     else
-      line("Linked: " .. rx .. " computer" .. (rx == 1 and "" or "s") .. " (" .. rxSpk .. " speaker" .. (rxSpk == 1 and "" or "s") .. ")", C.muted)
+      line("Linked: " .. rx .. (narrow and "" or (" computer" .. (rx == 1 and "" or "s")))
+        .. " (" .. rxSpk .. " speaker" .. (rxSpk == 1 and "" or "s") .. ")", C.muted)
       local now = os.clock()
       for id, r in pairs(receivers) do
         if now - r.seen <= RECEIVER_TIMEOUT then
@@ -2829,7 +3287,7 @@ function X.drawSettings()
             local vol = (r.volume or 100) .. "%"
             local name = r.label or ("Computer " .. id)
             local rid = id
-            text(2, y, G.dot .. " " .. F.trunc(name, W - 16), C.text, C.bg)
+            text(2, y, G.dot .. " " .. F.trunc(name, W - 17), C.text, C.bg)
             text(W - 12, y, string.rep(" ", 4 - #vol) .. vol, C.muted, C.bg)
             F.button(W - 7, y, " - ", C.text, C.btn, function() X.sendRxVolume(rid, (r.volume or 100) - 10) end)
             F.button(W - 3, y, " + ", C.text, C.btn, function() X.sendRxVolume(rid, (r.volume or 100) + 10) end)
@@ -2838,21 +3296,33 @@ function X.drawSettings()
         end
       end
     end
-    para("Remote: run '" .. CMD .. " remote' on a pocket computer with an ender modem.", C.muted)
+    row("Use as remote", "", "Switch", function() X.confirmSwitch("remote") end)
+    if #speakers > 0 then
+      row("Use as speaker", "", "Switch", function() X.confirmSwitch("link") end)
+    end
   else
-    para("Add a wireless or ender modem to play through speakers on other computers and use the remote.", C.muted)
+    para("Add a wireless or ender modem to link speakers on other computers or use a remote.", C.muted)
   end
   gap()
 
   -- Playback
   line("Playback", C.accent)
-  row("Visualiser: ", X.viz and "On" or "Off", X.viz and "Turn off" or "Turn on", function()
-    X.viz = not X.viz
+  toggle("Visualiser", X.viz, function() X.viz = not X.viz; F.redraw() end)
+  toggle("Shuffle", X.shuffle, X.toggleShuffle)
+  local sm = settings.get("phoenix_music.smoothing")
+  local smoothOn = sm == "light" or sm == "strong"
+  toggle("Smoothing", smoothOn, function()
+    settings.set("phoenix_music.smoothing", smoothOn and "off" or "light")
+    settings.save()
     F.redraw()
   end)
-  row("Shuffle: ", X.shuffle and "On" or "Off", X.shuffle and "Turn off" or "Turn on", X.toggleShuffle)
-  local sm = settings.get("phoenix_music.smoothing")
-  row("Smoothing: ", (sm == "light" and "Light") or (sm == "strong" and "Strong") or "Off", "Change", X.smoothMenu)
+  local hide = settings.get("phoenix_music.hide_long")
+  toggle(narrow and "Long videos" or "Long videos (15m+)", hide, function()
+    settings.set("phoenix_music.hide_long", not hide)
+    settings.save()
+    X.filterResults()
+    F.redraw()
+  end, "Hidden", "Shown")
   gap()
 
   -- Appearance
@@ -2869,9 +3339,9 @@ function X.drawSettings()
   if X.sleep_at then
     sleepVal = math.max(1, math.ceil((X.sleep_at - F.now_ms()) / 60000)) .. " min left"
   elseif X.sleep_after_song then
-    sleepVal = "After this song"
+    sleepVal = "After song"
   end
-  row("Sleep timer: ", sleepVal, "Set", X.sleepMenu)
+  row("Sleep: ", sleepVal, "Set", X.sleepMenu)
   local alarmVal = "Off"
   if X.alarm then
     alarmVal = X.fmtClock(X.alarm.time) .. (X.alarm.list and (", " .. X.listLabel(X.alarm.list)) or "")
@@ -2881,15 +3351,40 @@ function X.drawSettings()
     row("Redstone: ", X.redstoneLabel(), "Set", X.redstoneMenu)
   end
   line("Minecraft time: " .. X.fmtClock(os.time()), C.muted)
+  gap()
 
-  -- Scrolling: clamp, and show arrows when there's more
+  -- Updates
+  line("Updates", C.accent)
+  local u = X.upd
+  row("Version: ", "v" .. APP.version, "Check", X.requestCheck)
+  if u.state == "available" then
+    row("New: ", "v" .. u.version, "Update", X.requestInstall, C.accent)
+  elseif u.state == "installed" then
+    row("Updated: ", "v" .. u.version, "Restart", function() X.switchMode(args) end, C.accent)
+  else
+    local msg = ({
+      idle = "Not checked yet", checking = "Checking...", none = "Up to date",
+      installing = "Updating...", error = "Couldn't check: " .. tostring(u.err),
+    })[u.state] or ""
+    line(msg, C.muted)
+  end
+  local branch = settings.get("phoenix_music.update_channel")
+  if branch ~= "main" and branch ~= "" then line("Update branch: " .. branch, C.muted) end
+
+  -- On pocket computers About isn't a tab, so it's reached from here
+  if W < 34 then
+    gap()
+    line("About", C.accent)
+    row(APP.name .. " ", "", "Open", function() tab = 5; F.redraw() end)
+  end
+
+  -- Scrolling: clamp, and tappable arrows when there's more
   local maxScroll = math.max(0, (y - 1) - H + scroll[4])
   if scroll[4] > maxScroll then
     scroll[4] = maxScroll
     F.redraw()
   end
-  if scroll[4] > 0 then text(W, top, G.up, C.accent, C.bg) end
-  if scroll[4] < maxScroll then text(W, H, G.down, C.accent, C.bg) end
+  F.scrollArrows(4, top, maxScroll, math.max(1, H - top))
 end
 
 ---------------------------------------------------------------------------
@@ -2921,7 +3416,7 @@ function X.remoteCommand(msg)
   elseif c == "loop" then F.cycleLoop()
   elseif c == "shuffle" then X.toggleShuffle()
   elseif c == "fav" then F.toggleFavourite(now_playing)
-  elseif c == "mute" then muted = not muted
+  elseif c == "mute" then F.toggleMute()
   elseif c == "volume" and v then F.setVolume(v)
   elseif c == "seek" and v then F.seekSeconds(v)
   end
@@ -2951,13 +3446,31 @@ function X.runRemote()
     term.setBackgroundColour(C.bg)
     term.clear()
     F.fill(1, 1, W, 1, C.panel)
-    text(2, 1, F.trunc(G.note .. " " .. APP.name .. " Remote", W - 2), C.accent, C.panel)
+    -- Title bar: the name, or an update to tap; x goes back to the full player
+    local u = X.upd
+    local title, titleFn = G.note .. " " .. APP.name .. " Remote", nil
+    if u.state == "available" then
+      title, titleFn = "Update to v" .. u.version .. " - tap", X.requestInstall
+    elseif u.state == "installing" then
+      title = "Updating..."
+    elseif u.state == "installed" then
+      title, titleFn = "Updated - tap to restart", function() X.switchMode({ "remote" }) end
+    end
+    text(2, 1, F.trunc(title, W - 5), C.accent, C.panel)
+    if titleFn then F.addHit(1, 1, W - 4, 1, titleFn) end
+    F.button(W - 2, 1, " " .. G.close .. " ", C.muted, C.btn, function()
+      if #speakers == 0 then
+        settings.set("phoenix_music.nospeaker_mode", "player")
+        settings.save()
+      end
+      X.switchMode({ "player" })
+    end)
 
-    -- Bottom row: which group, and buttons to change group / PIN
+    -- Bottom row: which Link, and buttons to change Link / PIN
     local pinLabel, groupLabel = " PIN ", " Link "
-    text(2, H, F.trunc(group .. (pin ~= "" and " (PIN)" or ""), W - #pinLabel - #groupLabel - 4), C.muted, C.bg)
+    text(2, H, F.trunc(group, W - #pinLabel - #groupLabel - 4), C.muted, C.bg)
     F.button(W - #pinLabel - #groupLabel, H, groupLabel, C.text, C.btn, function() want = "group" end)
-    F.button(W - #pinLabel + 1, H, pinLabel, C.text, C.btn, function() want = "pin" end)
+    F.button(W - #pinLabel + 1, H, pinLabel, pin ~= "" and C.accent or C.text, C.btn, function() want = "pin" end)
 
     if not online() then
       local y = 3
@@ -2982,22 +3495,25 @@ function X.runRemote()
       F.addHit(W - 3, 4, 3, 2, function() send("fav") end)
     end
 
+    local compact = X.compact()
+    local py = compact and 6 or 7
+
     -- Progress (moves on between updates while playing)
     local cur = st.pos or 0
     if st.playing then cur = cur + (os.clock() - st_at) end
     if st.total then cur = math.min(cur, st.total) end
     local left, right = F.fmtTime(st.name and cur or nil), F.fmtTime(st.total)
     local bx, bw = 2 + #left + 1, W - 2 - #left - #right - 2
-    text(2, 7, left, C.muted, C.bg)
-    text(W - #right, 7, right, C.muted, C.bg)
+    text(2, py, left, C.muted, C.bg)
+    text(W - #right, py, right, C.muted, C.bg)
     if bw >= 3 then
-      F.fill(bx, 7, bw, 1, C.btn)
+      F.fill(bx, py, bw, 1, C.btn)
       if st.total and st.total > 0 then
         local filled = math.floor(bw * math.min(1, cur / st.total) + 0.5)
-        if filled > 0 then F.fill(bx, 7, filled, 1, C.accent) end
+        if filled > 0 then F.fill(bx, py, filled, 1, C.accent) end
       end
       if st.seekable and st.total then
-        F.addHit(bx, 7, bw, 1, function(x) send("seek", (x - bx) / math.max(1, bw - 1) * st.total) end)
+        F.addHit(bx, py, bw, 1, function(x) send("seek", (x - bx) / math.max(1, bw - 1) * st.total) end)
       end
     end
 
@@ -3017,16 +3533,17 @@ function X.runRemote()
       { ICONS.next, C.text, C.btn, function() send("next") end, has },
     }
     local vy
-    if W >= 7 * BTN_W + 6 + 2 then
+    local by = compact and 7 or 9
+    if not compact then
       table.insert(transport, 1, restartBtn)
       table.insert(transport, 1, shuffleBtn)
       table.insert(transport, loopBtn)
-      F.drawButtonRow(9, transport)
-      vy = 9 + BTN_H + 1
+      F.drawButtonRow(by, transport)
+      vy = by + BTN_H + 1
     else
-      F.drawButtonRow(9, transport)
-      F.drawButtonRow(9 + BTN_H + 1, { restartBtn, shuffleBtn, loopBtn })
-      vy = 9 + 2 * (BTN_H + 1)
+      F.drawButtonRow(by, transport)
+      F.drawButtonRow(by + BTN_H + 1, { restartBtn, shuffleBtn, loopBtn })
+      vy = by + 2 * (BTN_H + 1)
     end
 
     -- Volume
@@ -3112,7 +3629,7 @@ function X.runRemote()
       if ev == "mouse_click" or ev == "monitor_touch" then
         F.handleClick(b, c)
         draw()
-      elseif ev == "mouse_drag" and (c == 7) then
+      elseif ev == "mouse_drag" and c == (X.compact() and 6 or 7) then
         F.handleClick(b, c)
       elseif ev == "char" then
         if a == "q" then return
@@ -3131,8 +3648,10 @@ function X.runRemote()
           elseif a == "-" or a == "_" then send("volume", vol - VOLUME_STEP)
           end
         end
-      elseif ev == "remote_redraw" then
+      elseif ev == "remote_redraw" or ev == "redraw_screen" then
         draw()
+      elseif ev == "phoenix_quit" then
+        return
       elseif ev == "term_resize" then
         W, H = parent.getSize()
         win.reposition(1, 1, W, H)
@@ -3150,12 +3669,29 @@ end
 pcall(X.applyTheme)
 local ok, err
 if remote_mode then
-  ok, err = pcall(X.runRemote)
+  ok, err = pcall(parallel.waitForAny, X.runRemote, X.updateLoop)
 else
   pcall(F.loadState)
   pcall(F.loadLibrary)
+  if ask_nospeaker then
+    modal = {
+      title = "No speaker on this computer",
+      sub = "What should it do?",
+      options = {
+        { "Be a remote for a player", function()
+          settings.set("phoenix_music.nospeaker_mode", "remote")
+          settings.save()
+          X.switchMode({ "remote" })
+        end },
+        { "Play through linked speakers", function()
+          settings.set("phoenix_music.nospeaker_mode", "player")
+          settings.save()
+        end },
+      },
+    }
+  end
   ok, err = pcall(parallel.waitForAny, F.uiLoop, F.audioLoop, F.httpLoop, F.netLoop, F.tickLoop,
-    X.vizLoop, X.redstoneLoop)
+    X.vizLoop, X.redstoneLoop, X.updateLoop)
   pcall(F.saveState)
   F.stopSpeakers()
   if player_handle then pcall(player_handle.close) end
@@ -3171,3 +3707,6 @@ parent.setCursorPos(1, 1)
 if not ok and err ~= "Terminated" then
   printError(err)
 end
+
+-- Switching to the remote / a linked speaker, or restarting after an update
+if X.switch_to then P.relaunch(X.switch_to) end
