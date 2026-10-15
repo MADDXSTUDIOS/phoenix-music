@@ -657,11 +657,13 @@ local function linkScript()
   local t0 = 3
   for k = 0, 60 do
     local t = t0 + k * 2.7
-    at(t, "rednet_message", 5, {
+    -- Every so often the player pauses for ~8 seconds (no audio), then resumes
+    local paused = k % 20 >= 14 and k % 20 <= 16
+    if not paused then at(t, "rednet_message", 5, {
       type = "audio", group = "default", pin = "", data = string.rep("\85", 16384),
       at = math.floor((t + (k % 9 == 0 and -1 or 2.5)) * 1000) + 1700000000000, volume = 1.5,
       name = "Song " .. k, artist = "3:00 - Someone", smoothing = (k % 2 == 0) and "light" or "off",
-    }, "phoenix_music")
+    }, "phoenix_music") end
     if k % 13 == 12 then at(t + 1, "rednet_message", 5, { type = "stop", group = "default", pin = "" }, "phoenix_music") end
     if k % 17 == 5 then at(t + 0.5, "rednet_message", 5, { type = "rxvol", group = "default", pin = "", target = 1, value = 60 }, "phoenix_music") end
     if k % 11 == 3 then at(t + 0.2, "rednet_message", 5, { type = "ping", group = "default", pin = "" }, "phoenix_music") end
