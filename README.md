@@ -55,7 +55,7 @@ Needs CC: Tweaked 1.100.0 or newer.
 | --- | --- |
 | `phoenixmusic` | Run the player |
 | `phoenixmusic <monitor> [scale]` | Run on a monitor, e.g. `phoenixmusic monitor_0 0.5` |
-| `phoenixmusic link [name]` | Turn this computer into a wireless speaker on a Speaker Link |
+| `phoenixmusic link [name]` | Turn this computer into a wireless speaker on a Speaker Link (a standard grey computer does this with just `phoenixmusic`) |
 | `phoenixmusic remote` | Turn this computer into a remote for a player |
 
 On a computer with a modem but no speaker, Phoenix Music asks whether it should be a remote or drive linked speakers, and remembers your answer.

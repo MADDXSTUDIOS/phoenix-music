@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.5.2 for CC: Tweaked
+  Phoenix Music 3.5.3 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -13,6 +13,7 @@
   Usage:  phoenixmusic                 run on this computer's screen
           phoenixmusic <monitor> [s]   run on a monitor (s = text scale, default 0.5)
           phoenixmusic link [name]     be a wireless speaker on Speaker Link "name"
+                                       (a standard grey computer always starts as one)
           phoenixmusic remote          remote control (pocket computer + ender modem)
           (Settings can switch between player, remote and linked speaker too.)
 
@@ -60,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.5.2",
+  version = "3.5.3",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -343,14 +344,14 @@ function F.runReceiver(group, pin)
     if note or upd then
       term.setCursorPos(2, 12)
       term.setTextColour(accent)
-      term.write((note or ("Update available: v" .. upd.version .. " - press u")):sub(1, w - 2))
+      term.write((note or ("Update available: v" .. upd.version .. " - press u to install")):sub(1, w - 2))
     end
 
     -- Buttons (advanced computers can click them) and the key help
     btns = {}
     if colourful then
       local list = { { " Link ", "link" }, { " PIN ", "pin" }, { " - ", "down" }, { " + ", "up" } }
-      if upd then list[#list + 1] = { " Update ", "update" } end
+      list[#list + 1] = upd and { " Update ", "update" } or { " Check ", "update" }
       list[#list + 1] = { " Player ", "player" }
       local x = 2
       for _, b in ipairs(list) do
@@ -367,7 +368,7 @@ function F.runReceiver(group, pin)
     end
     term.setCursorPos(2, h)
     term.setTextColour(colours.lightGrey)
-    term.write(("Keys: l link  p PIN  +/- volume  q quit"):sub(1, w - 2))
+    term.write(("Keys: l link  p PIN  +/- volume  u update  q quit"):sub(1, w - 2))
   end
 
   local function hello(to)
@@ -504,15 +505,24 @@ function F.runReceiver(group, pin)
     end
   end
 
+  -- Checks on start, every 15 minutes (linked speakers are left running for
+  -- ages), and whenever someone presses u / Check.
+  local by_hand = false
   local function updater()
     sleep(3)
     while true do
       local info = P.checkUpdate()
       if info and info.newer then
-        upd = info
-        draw()
+        upd, note = info, nil
+      elseif by_hand then
+        note = info and ("Up to date (v" .. APP.version .. ")") or "Couldn't check for updates"
       end
-      sleep(15 * 60) -- linked speakers are left running for ages, so keep looking
+      by_hand = false
+      draw()
+      local timer = os.startTimer(15 * 60)
+      repeat
+        local ev, p = os.pullEvent()
+      until (ev == "timer" and p == timer) or ev == "phoenix_check"
     end
   end
 
@@ -555,6 +565,11 @@ function F.runReceiver(group, pin)
         setRxVolume(rx_volume + 10)
       elseif action == "down" then
         setRxVolume(rx_volume - 10)
+      elseif action == "update" and not upd then
+        by_hand = true
+        note = "Checking for updates..."
+        draw()
+        os.queueEvent("phoenix_check")
       elseif action == "update" and upd then
         note = "Updating..."
         draw()
@@ -631,6 +646,13 @@ if args[1] and not remote_mode and not force_player then
 end
 
 if not parent.isColour() then
+  -- A standard (grey) computer can't show the player, but it makes a fine
+  -- linked speaker, so that's what it becomes.
+  if not monitor_name and not remote_mode then
+    local r = F.runReceiver(settings.get("phoenix_music.group"), P.trim(settings.get("phoenix_music.pin")))
+    if r == "restart" then P.relaunch(args) end
+    return
+  end
   error("This needs an advanced computer or advanced monitor.", 0)
 end
 

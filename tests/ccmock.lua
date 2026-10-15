@@ -25,6 +25,7 @@ local SETUPS = {
   link       = { w = 51, h = 19, speakers = 1, modem = true, args = { "link" } },
   link_basic = { w = 51, h = 19, speakers = 1, modem = true, args = { "link" }, basic = true },
   wired      = { w = 51, h = 19, speakers = 2, modem = true, wired = true },
+  basic_auto = { w = 51, h = 19, speakers = 1, modem = true, basic = true },
   pocket_nospeaker = { w = 26, h = 20, speakers = 0, modem = true, pocket = true },
   pocket_noisy_remote = { w = 26, h = 20, speakers = 1, modem = true, pocket = true, args = { "remote" } },
 }
@@ -651,9 +652,9 @@ end
 -- Random clicks, taps, keys and typing (never "q", which quits)
 local function monkey()
   local chars = { " ", "n", "p", "s", "r", "l", "m", "f", "h", "v", "+", "-", "/", "a", "b", "u", "g" }
-  if scenario:find("^link") then
+  if scenario:find("^link") or scenario == "basic_auto" then
     -- Don't let it rename the Link or PIN, or it stops hearing the fake player
-    chars = { " ", "+", "-", "a", "b", "+", "-" }
+    chars = { " ", "+", "-", "a", "b", "+", "-", "u" }
   end
   local keylist = { keys.left, keys.right, keys.up, keys.down, keys.tab, keys.enter, keys.enter, keys.backspace }
   local t = 6
@@ -677,7 +678,7 @@ local function monkey()
   end
 end
 
-if scenario:find("^link") then linkScript()
+if scenario:find("^link") or scenario == "basic_auto" then linkScript()
 elseif scenario:find("^remote") then remoteScript()
 else playerScript() end
 monkey()
