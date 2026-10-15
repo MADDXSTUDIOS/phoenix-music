@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.2 for CC: Tweaked
+  Phoenix Music 3.7.3 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.2",
+  version = "3.7.3",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -431,7 +431,9 @@ function F.runReceiver(group, pin)
   end
 
   local function setRxVolume(v)
-    rx_volume = math.max(0, math.min(150, math.floor(v + 0.5)))
+    v = math.max(0, math.min(150, math.floor(v + 0.5)))
+    if v == rx_volume then hello(); return end -- a repeat: just confirm it
+    rx_volume = v
     settings.set("phoenix_music.rx_volume", rx_volume)
     settings.save()
     hello()
@@ -2960,12 +2962,22 @@ function F.netLoop()
     local id, msg = rednet.receive(PROTOCOL, 5)
     if id and P.ok(msg, group, pin) then
       if msg.type == "hello" then
-        local isNew = receivers[id] == nil
+        local old = receivers[id]
+        local vol = tonumber(msg.volume) or 100
+        local want = old and old.want
+        -- A volume change we sent hasn't landed (far away, message lost):
+        -- keep showing what was asked for and send it again
+        if want and vol ~= want.value and os.clock() - want.at < 60 then
+          rednet.send(id, { type = "rxvol", group = group, pin = pin, target = id, value = want.value }, PROTOCOL)
+          vol = want.value
+        else
+          want = nil
+        end
         receivers[id] = {
           label = msg.label, speakers = tonumber(msg.speakers) or 1,
-          volume = tonumber(msg.volume) or 100, seen = os.clock(),
+          volume = vol, seen = os.clock(), want = want,
         }
-        if isNew then F.redraw() end
+        if not old or (old.volume ~= vol) then F.redraw() end
       elseif msg.type == "cmd" then
         X.remoteCommand(msg)
         X.broadcastState()
@@ -3314,6 +3326,7 @@ function X.sendRxVolume(id, value)
   local r = receivers[id]
   if not r then return end
   r.volume = math.max(0, math.min(150, value))
+  r.want = { value = r.volume, at = os.clock() }
   rednet.send(id, { type = "rxvol", group = group, pin = pin, target = id, value = r.volume }, PROTOCOL)
   F.redraw()
 end
