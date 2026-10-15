@@ -48,7 +48,7 @@ Needs CC: Tweaked 1.100.0 or newer.
 - **Instant replays**: the last few songs stay in memory, so going back or looping starts straight away
 - **Loop** the queue or a single song, and **shuffle mode**
 - **Queue** you can reorder, remove from, shuffle and save
-- **Favourites and playlists**, plus a recently played list
+- **Favourites and playlists**, plus a recently played list. Tap the heart to favourite what's playing, or the + under it to add it to a playlist
 - **Picks up where you left off**: song, position, queue and settings survive a restart
 - **Speaker Link**: play through speakers on other computers, in sync (even if one joins mid-song), with an optional PIN and per-speaker volume
 - **Pocket remote**: control the player from anywhere with an ender modem
@@ -86,6 +86,8 @@ Or, on the other computer, open Phoenix Music and pick **Settings → Use as spe
 | Advanced computer | Standard computer |
 | --- | --- |
 | ![A linked speaker on an advanced computer](screenshots/speaker-link.png) | ![A linked speaker on a standard computer](screenshots/speaker-link-basic.png) |
+
+If the speakers ever drift apart, **Settings → Resync** starts them all again in step.
 
 Use a different Link name to run separate zones, and set a PIN so nobody else can join or control your speakers. The player doesn't need its own speaker if it has linked ones.
 

@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.5 for CC: Tweaked
+  Phoenix Music 3.8.0 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.5",
+  version = "3.8.0",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -1492,6 +1492,16 @@ function F.setVolume(v)
   F.redraw()
 end
 
+-- Linked speakers drifted? Pick the song up again at the same spot: every
+-- speaker (here and linked) starts afresh, in step.
+function X.resync()
+  if playing and not paused and playing_status == 1 then
+    pause()
+    F.resume()
+  end
+  F.redraw()
+end
+
 function F.toggleMute()
   muted = not muted
   X.vol_dirty_at = F.now_ms() + 300
@@ -2097,7 +2107,10 @@ function F.drawNowPlaying()
     -- Heart: red when it's a favourite. Tapping the title opens a song menu.
     local fav = F.isFavourite(np)
     text(W - 3, 4, " " .. G.heart .. " ", fav and C.err or C.muted, C.btn)
-    F.addHit(W - 3, 4, 3, 2, function() F.toggleFavourite(np) end)
+    F.addHit(W - 3, 4, 3, 1, function() F.toggleFavourite(np) end)
+    -- And under it, + to put this song in a playlist
+    text(W - 3, 5, " + ", C.text, C.btn)
+    F.addHit(W - 3, 5, 3, 1, function() F.choosePlaylistFor(F.itemsOf(np), np.name) end)
     F.addHit(1, 4, W - 5, 2, function()
       modal = { title = np.name, sub = np.artist, options = F.libraryOptions({}, np) }
       F.redraw()
@@ -3645,6 +3658,8 @@ function X.drawSettings()
         end
       end
     end
+    row("Out of sync?", "", "Resync", X.resync)
+    desc("Starts every speaker again at the same spot.")
     row("Use as remote", "", "Switch", function() X.confirmSwitch("remote") end)
     desc("Control a player on another computer from here.")
     if #speakers > 0 and not is_pocket then -- a pocket makes a poor fixed speaker
