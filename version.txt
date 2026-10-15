@@ -1,5 +1,6 @@
-3.7.4
+3.7.5
+Linked speakers rejoin instantly
+Fix: linked speaker crash on pause/resume
 Fix: pocket popup text cut off
 Fix: far speaker stuck at the wrong volume
 Search retries if the server's waking up
-Settings explain what they do

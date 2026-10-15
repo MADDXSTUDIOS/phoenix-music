@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.4 for CC: Tweaked
+  Phoenix Music 3.7.5 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.4",
+  version = "3.7.5",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -337,6 +337,7 @@ function F.runReceiver(group, pin)
   local decoder = dfpwm.make_decoder()
   local pending = {}               -- decoded chunks waiting for the speakers
   local until_ms = nil             -- when the audio we've handed the speakers runs out
+  local recent = {}                -- audio already handed over, kept for a rejoin
   local title, artist = nil, nil
   local last_audio = nil
   local typing = false
@@ -423,10 +424,21 @@ function F.runReceiver(group, pin)
   -- Stop the speakers but keep the audio that's waiting, so we drop straight
   -- back into step with everyone else (CC only takes a new volume when the
   -- speaker starts afresh).
+  -- Stopping throws away the few seconds the speakers had queued, so put
+  -- that audio back in front: the late-join trimming then cuts it to "now"
+  -- and we carry straight on instead of going quiet until the next chunk.
   local function rejoin()
     for _, s in ipairs(rx_speakers) do s.stop() end
     until_ms = nil
     for _, it in ipairs(pending) do it.done = {}; it.started = nil end
+    local now = os.epoch("utc")
+    for i = #recent, 1, -1 do
+      local r = recent[i]
+      if r.at + #r.buf / 48 > now + 20 then
+        table.insert(pending, 1, { buf = r.buf, at = r.at, vol = r.vol, done = {} })
+      end
+    end
+    recent = {}
     os.queueEvent("phoenix_rx")
   end
 
@@ -443,6 +455,7 @@ function F.runReceiver(group, pin)
 
   local function stopAll()
     pending = {}
+    recent = {}
     until_ms = nil
     smooth_last = nil
     decoder = dfpwm.make_decoder()
@@ -525,11 +538,13 @@ function F.runReceiver(group, pin)
               if s.playAudio(item.buf, vol) then item.done[i] = true else all = false end
             end
           end
-          if not item.started then
-            item.started = true
-            if not until_ms then until_ms = item.at or os.epoch("utc") end
-          end
+          -- (the timing can be wiped mid-chunk by a pause or a rejoin, so always
+          -- make sure there is one before counting on it)
+          if not until_ms then until_ms = (not item.started and item.at) or os.epoch("utc") end
+          item.started = true
           if all then
+            recent[#recent + 1] = { buf = item.buf, at = until_ms, vol = item.vol }
+            if #recent > 6 then table.remove(recent, 1) end
             until_ms = until_ms + #item.buf / 48
             if pending[1] == item then table.remove(pending, 1) end
           else
