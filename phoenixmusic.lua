@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.6.3 for CC: Tweaked
+  Phoenix Music 3.6.4 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.6.3",
+  version = "3.6.4",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -173,6 +173,28 @@ function P.smooth(buf, level, last)
   return y
 end
 
+-- Each mode on a computer (player, remote, linked speaker) keeps its own Link
+-- name and PIN. A mode that hasn't set its own yet starts from the player's.
+function P.credKeys(mode)
+  if mode == "player" then return "phoenix_music.group", "phoenix_music.pin" end
+  return "phoenix_music." .. mode .. "_group", "phoenix_music." .. mode .. "_pin"
+end
+
+function P.creds(mode)
+  local gk, pk = P.credKeys(mode)
+  local g, p = settings.get(gk), settings.get(pk)
+  if g == nil then g = settings.get("phoenix_music.group") end
+  if p == nil then p = settings.get("phoenix_music.pin") end
+  return tostring(g or "default"), P.trim(p)
+end
+
+function P.saveCreds(mode, g, p)
+  local gk, pk = P.credKeys(mode)
+  settings.set(gk, g)
+  settings.set(pk, p)
+  settings.save()
+end
+
 -- A message for our group, with the right PIN?
 function P.ok(msg, group, pin)
   return type(msg) == "table" and msg.group == group and tostring(msg.pin or "") == (pin or "")
@@ -232,9 +254,18 @@ end
 -- Downloads the latest version over this program, keeping the old one as a
 -- .bak. The download has to load cleanly first, so a bad upload can't break
 -- anyone's install.
-function P.installUpdate()
-  local code = P.fetch(P.rawUrl(P.FILE))
-  if not code or #code < 1000 then return false, "Download failed" end
+function P.installUpdate(expected)
+  -- GitHub can hand out a copy that's a few minutes old just after a release,
+  -- so check the download really is the new version, and retry if not.
+  local code
+  for attempt = 1, 3 do
+    code = P.fetch(P.rawUrl(P.FILE))
+    if not code or #code < 1000 then return false, "Download failed" end
+    local got = code:match('\n  version = "([%d%.]+)"')
+    if not expected or (got and not P.newer(expected, got)) then break end
+    if attempt == 3 then return false, "GitHub hasn't caught up yet - try again in a few minutes" end
+    sleep(4)
+  end
   if not load(code, "=" .. P.FILE, "t", {}) then return false, "The new version didn't pass its check" end
   if not code:find("Phoenix Music", 1, true) then return false, "That download isn't Phoenix Music" end
   local path = P.self_path
@@ -573,7 +604,7 @@ function F.runReceiver(group, pin)
       elseif action == "update" and upd then
         note = "Updating..."
         draw()
-        local ok, err = P.installUpdate()
+        local ok, err = P.installUpdate(upd.version)
         if ok then
           result = "restart"
           return
@@ -585,8 +616,7 @@ function F.runReceiver(group, pin)
         if v ~= "" and v ~= group then
           stopAll()
           group, title = v, nil
-          settings.set("phoenix_music.group", group)
-          settings.save()
+          P.saveCreds("link", group, pin)
           hello()
         end
         draw()
@@ -594,8 +624,7 @@ function F.runReceiver(group, pin)
         local v = P.trim(ask("PIN (blank for none): ", "*")):sub(1, 12)
         stopAll()
         pin, title = v, nil
-        settings.set("phoenix_music.pin", pin)
-        settings.save()
+        P.saveCreds("link", group, pin)
         hello()
         draw()
       end
@@ -625,7 +654,8 @@ if shell and shell.getRunningProgram then
 end
 
 if args[1] == "link" or args[1] == "receiver" then -- "receiver" was the old name
-  local r = F.runReceiver(args[2] or settings.get("phoenix_music.group"), P.trim(settings.get("phoenix_music.pin")))
+  local g, p = P.creds("link")
+  local r = F.runReceiver(args[2] or g, p)
   if r == "player" then P.relaunch({ "player" }) elseif r == "restart" then P.relaunch(args) end
   return
 end
@@ -649,7 +679,7 @@ if not parent.isColour() then
   -- A standard (grey) computer can't show the player, but it makes a fine
   -- linked speaker, so that's what it becomes.
   if not monitor_name and not remote_mode then
-    local r = F.runReceiver(settings.get("phoenix_music.group"), P.trim(settings.get("phoenix_music.pin")))
+    local r = F.runReceiver(P.creds("link"))
     if r == "restart" then P.relaunch(args) end
     return
   end
@@ -658,8 +688,7 @@ end
 
 local speakers = { peripheral.find("speaker") }
 local wireless = F.openModems()
-local group = settings.get("phoenix_music.group")
-local pin = P.trim(settings.get("phoenix_music.pin"))
+local group, pin = P.creds("player")
 local receivers = {}               -- [computer id] = { label, speakers, volume, seen }
 
 -- A computer with no speaker but a modem can be a remote instead. Once
@@ -674,6 +703,7 @@ end
 if remote_mode and not wireless then
   error("The remote needs a wireless or ender modem.", 0)
 end
+if remote_mode then group, pin = P.creds("remote") end
 if not remote_mode and #speakers == 0 and not wireless then
   error("No speakers found. Connect a speaker (directly or through a wired modem), or add a wireless or ender modem to play through linked speakers ('" .. CMD .. " link'). If this is an Advanced Noisy Pocket Computer, try restarting your Minecraft game.", 0)
 end
@@ -2385,13 +2415,15 @@ function F.drawQueue()
   end)
 end
 
+-- Silences the speakers on the Link we're leaving.
+function X.leaveLink()
+  if wireless then rednet.broadcast({ type = "stop", group = group, pin = pin }, PROTOCOL) end
+end
+
 function F.setGroup(name)
   name = F.trim(name):sub(1, 24)
   if name == "" or name == group then return end
-  if wireless then
-    -- Silence the old group's speakers before we leave it
-    rednet.broadcast({ type = "stop", group = group, pin = pin }, PROTOCOL)
-  end
+  X.leaveLink()
   group = name
   settings.set("phoenix_music.group", name)
   settings.save()
@@ -3192,7 +3224,7 @@ end
 function X.setPin(v)
   v = P.trim(v):sub(1, 12)
   if v == pin then return end
-  if wireless then rednet.broadcast({ type = "stop", group = group, pin = pin }, PROTOCOL) end
+  X.leaveLink()
   pin = v
   settings.set("phoenix_music.pin", pin)
   settings.save()
@@ -3364,7 +3396,7 @@ function X.updateLoop()
       local u = X.upd
       X.upd = { state = "installing", version = u.version, notes = u.notes }
       F.redraw()
-      local ok, err = P.installUpdate()
+      local ok, err = P.installUpdate(u.version)
       if ok then
         X.upd = { state = "installed", version = u.version }
         if not remote_mode then
@@ -3797,14 +3829,12 @@ function X.runRemote()
           local v = P.trim(ask("Link name (now " .. group .. "): ")):sub(1, 24)
           if v ~= "" then
             group, st, host = v, nil, nil
-            settings.set("phoenix_music.group", group)
-            settings.save()
+            P.saveCreds("remote", group, pin)
           end
         else
           local v = P.trim(ask("PIN (blank for none): ", "*")):sub(1, 12)
           pin, st, host = v, nil, nil
-          settings.set("phoenix_music.pin", pin)
-          settings.save()
+          P.saveCreds("remote", group, pin)
         end
         rednet.broadcast({ type = "remote_hello", group = group, pin = pin }, PROTOCOL)
         draw()

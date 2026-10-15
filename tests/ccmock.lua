@@ -557,7 +557,11 @@ local function respond(url)
       return (seed % 3 == 0 and not setup.scripted_only) and "9.9.9\nA test update\nAnother line" or "1.0.0\nOld"
     end
     stats.updates = stats.updates + 1
-    return files[prog_path]
+    -- The first download after a release can be a stale copy (like GitHub's
+    -- cache): pretend it's 9.9.9 only from the second try on
+    local code = files[prog_path]
+    if stats.updates >= 2 then code = code:gsub('\n  version = "[%d%.]+"', '\n  version = "9.9.9"', 1) end
+    return code
   end
   if url:find("search=", 1, true) then
     stats.searches = stats.searches + 1

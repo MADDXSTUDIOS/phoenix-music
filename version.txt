@@ -1,5 +1,5 @@
-3.6.3
+3.6.4
+Fix: update popup looping
+Player, remote and speaker PINs separate
 Remote sticks to one player
-Warns about two players on a Link
 Fix: search showing no results
-Live streams marked and hidden
