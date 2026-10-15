@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.5.1 for CC: Tweaked
+  Phoenix Music 3.5.2 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -60,7 +60,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.5.1",
+  version = "3.5.2",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -512,7 +512,7 @@ function F.runReceiver(group, pin)
         upd = info
         draw()
       end
-      sleep(4 * 3600)
+      sleep(15 * 60) -- linked speakers are left running for ages, so keep looking
     end
   end
 
@@ -2799,6 +2799,8 @@ function F.tickLoop()
     if tab == 1 and not modal and playing and not paused then F.redraw() end
     pcall(F.saveState)
 
+    X.dueUpdateCheck()
+
     -- Volume changed: pick the song back up at the same spot so it applies
     if X.vol_dirty_at and F.now_ms() >= X.vol_dirty_at then
       X.vol_dirty_at = nil
@@ -3200,6 +3202,14 @@ function X.confirmSwitch(mode)
 end
 
 function X.requestCheck() os.queueEvent("phoenix_update", "check", true) end
+
+-- The app is often left open for hours, so it re-checks every half hour.
+function X.dueUpdateCheck()
+  if X.next_check and F.now_ms() >= X.next_check and X.upd.state ~= "installing" then
+    X.next_check = nil
+    os.queueEvent("phoenix_update", "check", false)
+  end
+end
 function X.requestInstall() os.queueEvent("phoenix_update", "install") end
 
 function X.offerUpdate()
@@ -3238,14 +3248,15 @@ function X.updateLoop()
         X.upd = { state = "error", err = err }
       elseif info.newer then
         X.upd = { state = "available", version = info.version, notes = info.notes }
-        -- Ask once when the app opens, and again whenever someone checks by hand
-        if (manual or not X.upd_offered) and not modal and not prompt and not waiting_for_input then
-          X.upd_offered = true
+        -- Ask once per new version (and whenever someone checks by hand)
+        if (manual or X.upd_offered ~= info.version) and not modal and not prompt and not waiting_for_input then
+          X.upd_offered = info.version
           X.offerUpdate()
         end
       else
         X.upd = { state = "none" }
       end
+      X.next_check = F.now_ms() + 30 * 60 * 1000 -- look again in half an hour
       F.redraw()
     elseif what == "install" and X.upd.state == "available" then
       local u = X.upd
@@ -3657,6 +3668,7 @@ function X.runRemote()
   local function tickR()
     while true do
       sleep(0.5)
+      X.dueUpdateCheck()
       if not online() then
         host = nil
         rednet.broadcast({ type = "remote_hello", group = group, pin = pin }, PROTOCOL)

@@ -1,4 +1,5 @@
-3.5.1
+3.5.2
+Checks for updates while running
 Speaker Link stays in step when seeking
 Pocket: remote prompts, tidier layout
 Wired modem speakers supported
