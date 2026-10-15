@@ -1,5 +1,5 @@
-3.7.0
+3.7.1
 Show the player on a monitor too
+"monitor right phoenixmusic" now mirrors
 Fix: update popup looping
 Player, remote and speaker PINs separate
-Remote sticks to one player

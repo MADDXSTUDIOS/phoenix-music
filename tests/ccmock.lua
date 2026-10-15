@@ -28,6 +28,8 @@ local SETUPS = {
   basic_auto = { w = 51, h = 19, speakers = 1, modem = true, basic = true },
   queue      = { w = 51, h = 19, speakers = 1, modem = false, scripted_only = true },
   mirror     = { w = 57, h = 24, speakers = 1, modem = true, monitor = true, mirror = true },
+  -- started with "monitor monitor_0 phoenixmusic"
+  via_monitor = { w = 57, h = 24, speakers = 1, modem = true, monitor = true, mirror = true, via_monitor = true },
   pocket_nospeaker = { w = 26, h = 20, speakers = 0, modem = true, pocket = true },
   pocket_noisy_remote = { w = 26, h = 20, speakers = 1, modem = true, pocket = true, args = { "remote" } },
 }
@@ -297,7 +299,7 @@ do
 end
 
 local defs, vals = {}, {}
-if setup.mirror then vals["phoenix_music.mirror"] = "monitor_0" end
+if setup.mirror and not setup.via_monitor then vals["phoenix_music.mirror"] = "monitor_0" end
 settings = {
   define = function(k, o) defs[k] = o end,
   get = function(k, d)
@@ -459,6 +461,7 @@ for k = 1, setup.speakers do speakers["speaker_" .. k] = makeSpeaker("speaker_" 
 local modem = { isWireless = function() return not setup.wired end }
 if setup.pocket then pocket = {} end
 local monitor = makeTerm(setup.w, setup.h, true)
+if setup.via_monitor then current = monitor end
 
 local function typeOf(name)
   if speakers[name] then return "speaker" end

@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.7.0 for CC: Tweaked
+  Phoenix Music 3.7.1 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.7.0",
+  version = "3.7.1",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -674,6 +674,19 @@ local remote_mode = args[1] == "remote"
 local force_player = args[1] == "player"   -- skips the "no speaker here" choice
 local parent = term.current()
 local monitor_name = nil
+
+-- Started with CraftOS's "monitor <side> phoenixmusic"? Then run on the
+-- computer as normal and mirror onto that monitor, rather than leaving the
+-- computer's screen blank.
+local auto_mirror = nil
+do
+  local okName, name = pcall(peripheral.getName, parent)
+  if okName and type(name) == "string" and peripheral.hasType(name, "monitor")
+    and not args[1] and term.native().isColour() then
+    auto_mirror = name
+    parent = term.native()
+  end
+end
 
 if args[1] and not remote_mode and not force_player then
   local mon = peripheral.wrap(args[1])
@@ -3990,7 +4003,7 @@ end
 -- Run
 ---------------------------------------------------------------------------
 pcall(X.applyTheme)
-if not monitor_name and not remote_mode then pcall(X.openMirror, settings.get("phoenix_music.mirror")) end
+if not monitor_name and not remote_mode then pcall(X.openMirror, auto_mirror or settings.get("phoenix_music.mirror")) end
 local ok, err
 if remote_mode then
   ok, err = pcall(parallel.waitForAny, X.runRemote, X.updateLoop)
