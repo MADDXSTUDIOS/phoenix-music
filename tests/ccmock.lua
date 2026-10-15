@@ -524,7 +524,8 @@ local function utf8char(cp)
   return string.char(0xF0 + math.floor(cp / 262144), 0x80 + math.floor(cp / 4096) % 64,
     0x80 + math.floor(cp / 64) % 64, 0x80 + cp % 64)
 end
-local dot = utf8char(0xB7)
+-- Odd seeds send the separator as "?" (how CC's decoding may leave it)
+local dot = (seed % 2 == 1) and "?" or utf8char(0xB7)
 local note = utf8char(0x1F3B5)
 local bengali = utf8char(0x0986) .. utf8char(0x09AE) .. utf8char(0x09BE) .. utf8char(0x09B0)
 local SEARCH_JSON = '['
@@ -753,6 +754,7 @@ while ok and coroutine.status(main) ~= "dead" do
 end
 
 if scenario == "queue" then
+  if stats.songs < 1 then fail("search found nothing to play") end
   if stats.songs < 3 then fail("expected 3 songs to download, got " .. stats.songs) end
   if stats.prefetched < 2 then fail("the queued songs weren't downloaded ahead of time (" .. stats.prefetched .. ")") end
   if stats.gaps > 0 then fail("heard " .. stats.gaps .. " gap(s) between songs") end

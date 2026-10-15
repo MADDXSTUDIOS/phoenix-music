@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.6.1 for CC: Tweaked
+  Phoenix Music 3.6.2 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.6.1",
+  version = "3.6.2",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -1067,20 +1067,23 @@ function X.tidyItem(r)
   local raw = tostring(r.name or "")
   local mangled = raw:find(UNSHOWN, 1, true) or raw:find("??", 1, true)
   r.name, r.artist = X.cleanText(r.name), X.cleanText(r.artist)
-  local dur, chan = r.artist:match("^([%d:]+)%s*\183%s*(.*)$")
+  -- "3:33 . Channel": the separator can arrive as any symbol, so don't rely on it
+  local dur, sep, chan = r.artist:match("^(%d+:%d[%d:]*)(%s*[^%w%s]*%s*)(.*)$")
   if dur and chan == "" then
     chan = "unknown channel"
-    r.artist = dur .. " \183 Unknown channel"
+    r.artist = dur .. sep .. "Unknown channel"
   end
-  -- Live streams come back with no length ("undefined", "LIVE" or nothing);
-  -- the server can't convert them, so they're marked and hidden like long ones
+  -- Live streams come back with no length (the line starts "undefined",
+  -- "null" or "LIVE"); the server can't convert them, so they're marked and
+  -- hidden like the long ones. Anything we can't read stays as it is.
   if r.type ~= "playlist" and not dur then
-    local head, rest = r.artist:match("^(.-)%s*\183%s*(.*)$")
-    if not head then head, rest = "", r.artist end
-    if not head:match("%d:%d") then
+    local lower = r.artist:lower()
+    local word = lower:match("^(%a+)")
+    if word == "undefined" or word == "null" or word == "live" then
+      local rest = r.artist:match("^%a+%s*[^%w%s]*%s*(.*)$") or ""
       r.live = true
       chan = rest ~= "" and rest or "unknown channel"
-      r.artist = "LIVE \183 " .. chan
+      r.artist = "LIVE - " .. chan
     end
   end
   local _, letters = r.name:gsub("%w", "")
@@ -1097,6 +1100,10 @@ function X.filterResults()
   search_results = {}
   for _, r in ipairs(X.all_results) do
     if not (hide and r.too_long) then search_results[#search_results + 1] = r end
+  end
+  -- Never hide everything: if the filter would leave nothing, show it all
+  if #search_results == 0 then
+    for _, r in ipairs(X.all_results) do search_results[#search_results + 1] = r end
   end
   X.hidden_count = #X.all_results - #search_results
 end
@@ -1132,7 +1139,7 @@ function X.maybePrefetch()
   if X.prefetch or not playing or playing_status ~= 1 then return end
   local nxt = X.peekNext()
   if not nxt or not nxt.id or X.prefetch_failed[nxt.id] or X.tooLong(nxt) then return end
-  if tostring(nxt.artist):find("^LIVE") then return end
+  if tostring(nxt.artist):find("^LIVE %- ") then return end
   for _, c in ipairs(X.cache) do
     if c.id == nxt.id then return end -- already downloaded
   end
@@ -2832,7 +2839,7 @@ function F.httpLoop()
       elseif url == last_download_url then
         is_loading = false
         is_error = true
-        local live = now_playing and tostring(now_playing.artist):find("^LIVE")
+        local live = now_playing and tostring(now_playing.artist):find("^LIVE %- ")
         X.error_text = (live and "Live streams can't be played")
           or (X.tooLong(now_playing) and "Too long for the server (15 min max)")
           or "Couldn't load this song"

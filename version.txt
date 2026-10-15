@@ -1,5 +1,5 @@
-3.6.1
+3.6.2
+Fix: search showing no results
 Live streams marked and hidden
 Credit for JzJad's Jukebox
 Next song downloads early
-No more wait between songs
