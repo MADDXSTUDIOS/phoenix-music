@@ -26,6 +26,7 @@ local SETUPS = {
   link_basic = { w = 51, h = 19, speakers = 1, modem = true, args = { "link" }, basic = true },
   wired      = { w = 51, h = 19, speakers = 2, modem = true, wired = true },
   basic_auto = { w = 51, h = 19, speakers = 1, modem = true, basic = true },
+  queue      = { w = 51, h = 19, speakers = 1, modem = false, scripted_only = true },
   pocket_nospeaker = { w = 26, h = 20, speakers = 0, modem = true, pocket = true },
   pocket_noisy_remote = { w = 26, h = 20, speakers = 1, modem = true, pocket = true, args = { "remote" } },
 }
@@ -33,7 +34,8 @@ local setup = assert(SETUPS[scenario], "unknown scenario " .. scenario)
 local SIM_SECONDS = 240
 
 local failures = {}
-local stats = { chunks = 0, searches = 0, songs = 0, failed_songs = 0, updates = 0, link_audio = 0 }
+local stats = { chunks = 0, searches = 0, songs = 0, failed_songs = 0, updates = 0, link_audio = 0,
+  prefetched = 0, gaps = 0 }
 local function fail(msg)
   failures[#failures + 1] = msg
   io.stderr:write("[" .. scenario .. " seed " .. seed .. "] " .. msg .. "\n")
@@ -438,6 +440,8 @@ local function makeSpeaker(name)
     end
     if now < sp.free_at then return false end
     stats.chunks = stats.chunks + 1
+    -- A speaker that had gone quiet for a while before this audio = a gap
+    if sp.end_at > 0 and now > sp.end_at + 0.5 then stats.gaps = stats.gaps + 1 end
     local start = math.max(now, sp.end_at)
     sp.end_at = start + #buf / 48000
     sp.free_at = start
@@ -548,7 +552,7 @@ local function respond(url)
   if url:find("raw.githubusercontent.com", 1, true) then
     -- Only some runs see an update, so the others get to run for the whole time
     if url:find("version.txt", 1, true) then
-      return (seed % 3 == 0) and "9.9.9\nA test update\nAnother line" or "1.0.0\nOld"
+      return (seed % 3 == 0 and not setup.scripted_only) and "9.9.9\nA test update\nAnother line" or "1.0.0\nOld"
     end
     stats.updates = stats.updates + 1
     return files[prog_path]
@@ -563,6 +567,10 @@ local function respond(url)
       return nil
     end
     stats.songs = stats.songs + 1
+    -- Asked for while a speaker is still playing = downloaded ahead of time
+    for _, sp in pairs(speakers) do
+      if now < sp.end_at then stats.prefetched = stats.prefetched + 1; break end
+    end
     return string.rep("\170\85", 22000) -- about 7 seconds of audio
   end
   return nil
@@ -678,10 +686,26 @@ local function monkey()
   end
 end
 
-if scenario:find("^link") or scenario == "basic_auto" then linkScript()
+-- Search, play the first result, queue two more, then just listen
+local function queueScript()
+  local mx = math.floor(W / 2)
+  at(2, "char", "/")
+  at(2.1, "char", "a")
+  at(2.2, "key", keys.enter)
+  at(4, click(mx, 7))      -- first result
+  at(4.5, click(mx, 7))    -- Play now
+  at(6, "key", keys.tab)   -- back to Search
+  at(7, click(mx, 9))      -- second result
+  at(7.5, click(mx, 11))   -- Add to queue
+  at(8, click(mx, 11))     -- third result
+  at(8.5, click(mx, 11))   -- Add to queue
+end
+
+if scenario == "queue" then queueScript()
+elseif scenario:find("^link") or scenario == "basic_auto" then linkScript()
 elseif scenario:find("^remote") then remoteScript()
 else playerScript() end
-monkey()
+if not setup.scripted_only then monkey() end
 
 ---------------------------------------------------------------------------
 -- Run it
@@ -727,10 +751,16 @@ while ok and coroutine.status(main) ~= "dead" do
   end
 end
 
+if scenario == "queue" then
+  if stats.songs < 3 then fail("expected 3 songs to download, got " .. stats.songs) end
+  if stats.prefetched < 2 then fail("the queued songs weren't downloaded ahead of time (" .. stats.prefetched .. ")") end
+  if stats.gaps > 0 then fail("heard " .. stats.gaps .. " gap(s) between songs") end
+end
+
 local ended = coroutine.status(main) == "dead" and "app quit" or "time up"
 local extra = relaunched and (" (relaunched with: " .. table.concat(relaunched, " ") .. ")") or ""
 print(string.format("[%s seed %d] %s after %.0fs sim, %d events; downloads %d (+%d failed), searches %d, "
-  .. "speaker chunks %d, link audio sent %d, update downloads %d%s",
+  .. "speaker chunks %d, link audio sent %d, update downloads %d, early downloads %d, gaps %d%s",
   scenario, seed, ended, now, delivered, stats.songs, stats.failed_songs, stats.searches,
-  stats.chunks, stats.link_audio, stats.updates, extra))
+  stats.chunks, stats.link_audio, stats.updates, stats.prefetched, stats.gaps, extra))
 os.exit(#failures == 0 and 0 or 1)

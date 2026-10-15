@@ -34,6 +34,7 @@ Needs CC: Tweaked 1.100.0 or newer.
 
 - **Search and play** YouTube videos and playlists, or paste a link
 - **Proper controls**: play/pause, stop, previous, next, restart, seek by tapping the progress bar
+- **No wait between songs**: the next song downloads in the background while the current one plays
 - **Instant replays**: the last few songs stay in memory, so going back or looping starts straight away
 - **Loop** the queue or a single song, and **shuffle mode**
 - **Queue** you can reorder, remove from, shuffle and save

@@ -1,7 +1,7 @@
 -- Runs every smoke-test scenario with a few different random seeds.
 -- Results are printed as GitHub annotations so they show up on the run.
 local scenarios = {
-  "computer", "pocket", "medium", "monitor", "nospeaker",
+  "queue", "computer", "pocket", "medium", "monitor", "nospeaker",
   "remote", "remote_wide", "link", "link_basic",
   "wired", "pocket_nospeaker", "pocket_noisy_remote", "basic_auto",
 }

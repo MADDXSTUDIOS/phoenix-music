@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.5.3 for CC: Tweaked
+  Phoenix Music 3.6.0 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.5.3",
+  version = "3.6.0",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -778,6 +778,9 @@ local X = {
   switch_to = nil,                 -- args to run again with when we quit (mode switch / update)
   progress_row = 7,                -- where the progress bar is this frame
   all_results = nil,               -- search results before hiding long videos
+  prefetch = nil,                  -- next song downloading in the background: { id, url }
+  prefetch_failed = {},            -- songs the server couldn't give us (don't keep asking)
+  next_pick = nil,                 -- in shuffle mode, the song chosen to play next
 }
 
 -- Length in seconds from an artist line like "3:33 - Alan Walker".
@@ -1088,9 +1091,42 @@ function X.filterResults()
 end
 
 -- Takes the next song off the queue: the first, or a random one in shuffle mode.
+-- The song that will play next, so it can download in the background. In
+-- shuffle mode the random pick is made now and kept, so that's what plays.
+function X.peekNext()
+  if looping == 2 or #queue == 0 then return nil end -- looping a song: it's already here
+  if X.shuffle and #queue > 1 then
+    for _, it in ipairs(queue) do
+      if it == X.next_pick then return it end
+    end
+    X.next_pick = queue[math.random(#queue)]
+    return X.next_pick
+  end
+  return queue[1]
+end
+
+-- Takes the next song off the queue: the first, or the shuffle pick.
 function X.takeNext()
-  local i = (X.shuffle and #queue > 1) and math.random(#queue) or 1
-  return table.remove(queue, i)
+  local pick = X.peekNext()
+  X.next_pick = nil
+  for i, it in ipairs(queue) do
+    if it == pick then return table.remove(queue, i) end
+  end
+  return table.remove(queue, 1)
+end
+
+-- While a song plays, fetch the next one so it starts the moment this ends
+-- (the wait between songs was the server fetching and converting it).
+function X.maybePrefetch()
+  if X.prefetch or not playing or playing_status ~= 1 then return end
+  local nxt = X.peekNext()
+  if not nxt or not nxt.id or X.prefetch_failed[nxt.id] or X.tooLong(nxt) then return end
+  for _, c in ipairs(X.cache) do
+    if c.id == nxt.id then return end -- already downloaded
+  end
+  local url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(nxt.id)
+  X.prefetch = { id = nxt.id, url = url }
+  http.request({ url = url, binary = true })
 end
 
 function X.toggleShuffle()
@@ -2655,6 +2691,12 @@ function F.audioLoop()
         if cached then
           last_download_url = nil
           X.openAudio(cached)
+        elseif X.prefetch and X.prefetch.id == this_id then
+          -- Already on its way in the background: just wait for that
+          last_download_url = X.prefetch.url
+          X.prefetch = nil
+          is_loading = true
+          F.redraw()
         else
           last_download_url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(playing_id)
           http.request({ url = last_download_url, binary = true })
@@ -2760,6 +2802,11 @@ function F.httpLoop()
         handle.close()
         if now_playing and now_playing.id then X.cachePut(now_playing.id, data) end
         X.openAudio(data)
+      elseif X.prefetch and url == X.prefetch.url then
+        local data = handle.readAll() or ""
+        handle.close()
+        X.cachePut(X.prefetch.id, data)
+        X.prefetch = nil
       elseif type(url) == "string" and url:sub(1, #api_base_url) == api_base_url then
         pcall(handle.close) -- an old request we no longer want
       end
@@ -2777,6 +2824,9 @@ function F.httpLoop()
         playing_id = nil
         F.redraw()
         os.queueEvent("audio_update")
+      elseif X.prefetch and url == X.prefetch.url then
+        X.prefetch_failed[X.prefetch.id] = true
+        X.prefetch = nil
       end
     end
   end
@@ -2822,6 +2872,7 @@ function F.tickLoop()
     pcall(F.saveState)
 
     X.dueUpdateCheck()
+    X.maybePrefetch()
 
     -- Volume changed: pick the song back up at the same spot so it applies
     if X.vol_dirty_at and F.now_ms() >= X.vol_dirty_at then
