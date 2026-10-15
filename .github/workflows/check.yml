@@ -26,3 +26,28 @@ jobs:
 
       - name: Smoke test (fake CC computer, random clicks and keys)
         run: lua5.2 tests/run_all.lua
+
+  # When main has a new version that passed the checks, publish it as a
+  # GitHub release (tag vX.Y.Z) with .github/release.md as the description.
+  release:
+    needs: lua
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release if this version is new
+        run: |
+          ver=$(head -n1 version.txt | tr -d '[:space:]v')
+          if gh release view "v$ver" >/dev/null 2>&1; then
+            echo "v$ver already released"
+          else
+            gh release create "v$ver" --target "$GITHUB_SHA" -t "Phoenix Music $ver" -F .github/release.md
+          fi
+
+      - name: Tidy up the old test branch
+        run: git push origin --delete ci-check || true
