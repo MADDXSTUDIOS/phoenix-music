@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.5.0 for CC: Tweaked
+  Phoenix Music 3.5.1 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -60,7 +60,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.5.0",
+  version = "3.5.1",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -143,7 +143,7 @@ settings.define("phoenix_music.rx_volume", {
   type = "number",
 })
 
-local SYNC_LEAD = 400              -- ms between sending a fresh start and everyone playing it
+local SYNC_LEAD = 600              -- ms between sending a fresh start and everyone playing it
 local LEAD_AHEAD = 3000            -- ms ahead a player with no speaker sends audio to linked ones
 
 -- Small helpers shared by the player, receivers and remotes.
@@ -261,15 +261,24 @@ end
 -- Most functions live in F: CC's Lua caps how many locals can be in scope.
 local F = {}
 
+-- Speakers on a wired modem network are found like any other speaker. Speaker
+-- Link and the remote need a wireless or ender modem; when there is one,
+-- wired modems join in too so linked computers on the cable hear us as well.
+-- Returns true if there's a wireless (or ender) modem.
 function F.openModems()
-  local any = false
+  local wifi = false
   for _, name in ipairs(peripheral.getNames()) do
     if peripheral.hasType(name, "modem") then
-      if not rednet.isOpen(name) then rednet.open(name) end
-      any = true
+      local m = peripheral.wrap(name)
+      if m and m.isWireless and m.isWireless() then wifi = true end
     end
   end
-  return any
+  if wifi then
+    for _, name in ipairs(peripheral.getNames()) do
+      if peripheral.hasType(name, "modem") and not rednet.isOpen(name) then rednet.open(name) end
+    end
+  end
+  return wifi
 end
 
 -- Linked speaker mode: plays whatever the player on our Link sends.
@@ -406,11 +415,14 @@ function F.runReceiver(group, pin)
           title, artist = msg.name, msg.artist
           if not last_audio or os.clock() - last_audio >= 5 then changed = true end
           last_audio = os.clock()
-          local buf = decoder(msg.data)
-          smooth_last = P.smooth(buf, msg.smoothing, smooth_last)
-          table.insert(pending, { buf = buf, vol = tonumber(msg.volume) or 1, at = tonumber(msg.at), done = {} })
+          -- Keep the raw audio; it's only unpacked when it's next to play, so a
+          -- burst of messages (someone dragging through a song) can't bog us down
+          table.insert(pending, {
+            data = msg.data, smoothing = msg.smoothing,
+            vol = tonumber(msg.volume) or 1, at = tonumber(msg.at), done = {},
+          })
           -- If we've fallen well behind, drop the oldest audio rather than lag forever
-          while #pending > 4 do table.remove(pending, 1) end
+          while #pending > 6 do table.remove(pending, 1) end
           os.queueEvent("phoenix_rx")
           if changed then draw() end
         elseif msg.type == "stop" then
@@ -434,6 +446,11 @@ function F.runReceiver(group, pin)
       if not item then
         os.pullEvent("phoenix_rx")
       else
+        if not item.buf then
+          item.buf = decoder(item.data)
+          smooth_last = P.smooth(item.buf, item.smoothing, smooth_last)
+          item.data = nil
+        end
         local now = os.epoch("utc")
         if until_ms and now > until_ms + 250 then until_ms = nil end -- we ran dry
         local ready = true
@@ -626,6 +643,7 @@ local receivers = {}               -- [computer id] = { label, speakers, volume,
 -- A computer with no speaker but a modem can be a remote instead. Once
 -- someone picks that, it starts as a remote from then on.
 local ask_nospeaker = false
+local is_pocket = pocket ~= nil
 if not remote_mode and not force_player and not monitor_name and #speakers == 0 and wireless then
   local choice = settings.get("phoenix_music.nospeaker_mode")
   if choice == "remote" then remote_mode = true
@@ -635,7 +653,7 @@ if remote_mode and not wireless then
   error("The remote needs a wireless or ender modem.", 0)
 end
 if not remote_mode and #speakers == 0 and not wireless then
-  error("No speakers attached. Connect a speaker to this computer, or add a modem to play through wireless speakers ('" .. CMD .. " link'). If this is an Advanced Noisy Pocket Computer, try restarting your Minecraft game.", 0)
+  error("No speakers found. Connect a speaker (directly or through a wired modem), or add a wireless or ender modem to play through linked speakers ('" .. CMD .. " link'). If this is an Advanced Noisy Pocket Computer, try restarting your Minecraft game.", 0)
 end
 
 -- Theme: remap a few palette slots so the UI isn't stuck with stock colours.
@@ -883,6 +901,7 @@ function F.broadcastChunk(chunk, at)
 end
 
 function F.closeHandle()
+  X.seek_target, X.seek_due = nil, nil -- a pending seek belonged to the old song
   if player_handle then pcall(player_handle.close) end
   player_handle = nil
   playing_status = 0
@@ -1660,8 +1679,27 @@ function F.statusLine()
   return "Stopped", C.muted
 end
 
+-- Seeking: dragging (or holding an arrow key) only moves the bar; the actual
+-- seek happens once you let go. Every seek restarts the speakers and sends
+-- linked ones fresh audio, so dozens a second knocks them out of step.
+function X.requestSeek(b, delay)
+  if not (seekable and total_bytes) then return end
+  X.seek_target = math.max(0, math.min(b, total_bytes))
+  X.seek_due = F.now_ms() + (delay or 0)
+  F.redraw()
+end
+
+function X.applySeek()
+  if X.seek_target and X.seek_due and F.now_ms() >= X.seek_due then
+    local b = X.seek_target
+    X.seek_target, X.seek_due = nil, nil
+    F.seekBytes(b)
+  end
+end
+
 function F.drawProgress(y)
   local cur = F.elapsedBytes() / BYTES_PER_SEC
+  if X.seek_target then cur = X.seek_target / BYTES_PER_SEC end
   local tot = total_bytes and total_bytes / BYTES_PER_SEC or nil
   local left = F.fmtTime(now_playing and cur or nil)
   local right = F.fmtTime(tot)
@@ -1678,7 +1716,8 @@ function F.drawProgress(y)
   end
   if seekable and total_bytes then
     F.addHit(bx, y, bw, 1, function(x)
-      F.seekBytes((x - bx) / math.max(1, bw - 1) * total_bytes)
+      -- applied on release (mouse_up); monitors have no release, so shortly after
+      X.requestSeek((x - bx) / math.max(1, bw - 1) * total_bytes, 400)
     end)
   end
 end
@@ -1923,7 +1962,7 @@ function F.drawNowPlaying()
   local compact = X.compact()
   X.progress_row = compact and 6 or 7
   F.drawProgress(X.progress_row)
-  local vy = F.drawControls(compact and 7 or 9)
+  local vy = F.drawControls(compact and 8 or 9)
   volume_row = vy
   F.drawVolume(vy)
 
@@ -2425,8 +2464,10 @@ function F.handleChar(ch)
 end
 
 function F.handleKey(key)
-  if key == keys.left then F.seekSeconds(F.elapsedBytes() / BYTES_PER_SEC - SEEK_STEP)
-  elseif key == keys.right then F.seekSeconds(F.elapsedBytes() / BYTES_PER_SEC + SEEK_STEP)
+  if key == keys.left or key == keys.right then
+    local from = X.seek_target or F.elapsedBytes()
+    local step = SEEK_STEP * BYTES_PER_SEC * (key == keys.left and -1 or 1)
+    X.requestSeek(from + step, 500)
   elseif key == keys.tab then tab = tab % 5 + 1; modal = nil; F.redraw()
   elseif key == keys.up and scroll[tab] then scroll[tab] = math.max(0, scroll[tab] - 1); F.redraw()
   elseif key == keys.down and scroll[tab] then scroll[tab] = scroll[tab] + 1; F.redraw()
@@ -2524,6 +2565,8 @@ function F.uiLoop()
         F.handleClick(b, c)
       elseif ev == "monitor_touch" and a == monitor_name then
         F.handleClick(b, c)
+      elseif ev == "mouse_up" then
+        if X.seek_target then X.seek_due = F.now_ms(); X.applySeek() end
       elseif ev == "mouse_drag" and a == 1 and not modal then
         -- Dragging along the progress or volume bar scrubs it
         if (tab == 1 and (c == X.progress_row or c == volume_row)) then F.handleClick(b, c) end
@@ -2878,6 +2921,7 @@ end
 function X.vizLoop()
   while true do
     sleep(0.1)
+    X.applySeek()
     if tab == 1 and X.viz and not modal and not prompt and not waiting_for_input
       and playing and not paused then
       F.redraw()
@@ -3297,7 +3341,7 @@ function X.drawSettings()
       end
     end
     row("Use as remote", "", "Switch", function() X.confirmSwitch("remote") end)
-    if #speakers > 0 then
+    if #speakers > 0 and not is_pocket then -- a pocket makes a poor fixed speaker
       row("Use as speaker", "", "Switch", function() X.confirmSwitch("link") end)
     end
   else
@@ -3430,6 +3474,8 @@ function X.runRemote()
   local st, st_at, host = nil, -100, nil
   local want = nil                 -- "group" / "pin" once a button asks for typing
   local typing = false
+  local suggest_player = is_pocket and #speakers > 0
+  local seek_preview = nil        -- seconds, while dragging along the bar
 
   local function send(cmd, value)
     local m = { type = "cmd", group = group, pin = pin, cmd = cmd, value = value }
@@ -3448,7 +3494,7 @@ function X.runRemote()
     F.fill(1, 1, W, 1, C.panel)
     -- Title bar: the name, or an update to tap; x goes back to the full player
     local u = X.upd
-    local title, titleFn = G.note .. " " .. APP.name .. " Remote", nil
+    local title, titleFn = G.note .. (W < 30 and " Music Remote" or (" " .. APP.name .. " Remote")), nil
     if u.state == "available" then
       title, titleFn = "Update to v" .. u.version .. " - tap", X.requestInstall
     elseif u.state == "installing" then
@@ -3458,13 +3504,27 @@ function X.runRemote()
     end
     text(2, 1, F.trunc(title, W - 5), C.accent, C.panel)
     if titleFn then F.addHit(1, 1, W - 4, 1, titleFn) end
-    F.button(W - 2, 1, " " .. G.close .. " ", C.muted, C.btn, function()
-      if #speakers == 0 then
-        settings.set("phoenix_music.nospeaker_mode", "player")
-        settings.save()
-      end
-      X.switchMode({ "player" })
-    end)
+    if not (is_pocket and #speakers == 0) then -- a speakerless pocket has nothing else to be
+      F.button(W - 2, 1, " " .. G.close .. " ", C.muted, C.btn, function()
+        if #speakers == 0 then
+          settings.set("phoenix_music.nospeaker_mode", "player")
+          settings.save()
+        end
+        X.switchMode({ "player" })
+      end)
+    end
+
+    -- A Noisy Pocket can play music itself: offer the player instead
+    if suggest_player then
+      local lines = F.wrap("This pocket has a speaker, so it can play music itself.", W - 4)
+      local y = 3
+      for _, l in ipairs(lines) do text(3, y, l, C.text, C.bg); y = y + 1 end
+      y = y + 1
+      F.button(3, y, " Open the player ", C.bg, C.accent, function() X.switchMode({ "player" }) end)
+      F.button(3, y + 2, " Stay as a remote ", C.text, C.btn, function() suggest_player = false end)
+      win.setVisible(true)
+      return
+    end
 
     -- Bottom row: which Link, and buttons to change Link / PIN
     local pinLabel, groupLabel = " PIN ", " Link "
@@ -3496,12 +3556,13 @@ function X.runRemote()
     end
 
     local compact = X.compact()
-    local py = compact and 6 or 7
+    local py = 7
 
     -- Progress (moves on between updates while playing)
     local cur = st.pos or 0
     if st.playing then cur = cur + (os.clock() - st_at) end
     if st.total then cur = math.min(cur, st.total) end
+    if seek_preview then cur = seek_preview end
     local left, right = F.fmtTime(st.name and cur or nil), F.fmtTime(st.total)
     local bx, bw = 2 + #left + 1, W - 2 - #left - #right - 2
     text(2, py, left, C.muted, C.bg)
@@ -3513,7 +3574,8 @@ function X.runRemote()
         if filled > 0 then F.fill(bx, py, filled, 1, C.accent) end
       end
       if st.seekable and st.total then
-        F.addHit(bx, py, bw, 1, function(x) send("seek", (x - bx) / math.max(1, bw - 1) * st.total) end)
+        -- Sent once on release, not for every step of a drag
+        F.addHit(bx, py, bw, 1, function(x) seek_preview = (x - bx) / math.max(1, bw - 1) * st.total end)
       end
     end
 
@@ -3533,7 +3595,7 @@ function X.runRemote()
       { ICONS.next, C.text, C.btn, function() send("next") end, has },
     }
     local vy
-    local by = compact and 7 or 9
+    local by = 9
     if not compact then
       table.insert(transport, 1, restartBtn)
       table.insert(transport, 1, shuffleBtn)
@@ -3629,8 +3691,14 @@ function X.runRemote()
       if ev == "mouse_click" or ev == "monitor_touch" then
         F.handleClick(b, c)
         draw()
-      elseif ev == "mouse_drag" and c == (X.compact() and 6 or 7) then
+      elseif ev == "mouse_drag" and c == 7 then
         F.handleClick(b, c)
+        draw()
+      elseif ev == "mouse_up" then
+        if seek_preview then
+          send("seek", seek_preview)
+          seek_preview = nil
+        end
       elseif ev == "char" then
         if a == "q" then return
         elseif online() then
@@ -3673,7 +3741,20 @@ if remote_mode then
 else
   pcall(F.loadState)
   pcall(F.loadLibrary)
-  if ask_nospeaker then
+  if ask_nospeaker and is_pocket then
+    -- A pocket with no speaker can't play anything itself: it's a remote
+    modal = {
+      title = "No speaker in this pocket",
+      sub = "Use it as a remote instead?",
+      options = {
+        { "Switch to the remote", function()
+          settings.set("phoenix_music.nospeaker_mode", "remote")
+          settings.save()
+          X.switchMode({ "remote" })
+        end },
+      },
+    }
+  elseif ask_nospeaker then
     modal = {
       title = "No speaker on this computer",
       sub = "What should it do?",

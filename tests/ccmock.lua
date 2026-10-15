@@ -24,6 +24,9 @@ local SETUPS = {
   remote_wide = { w = 51, h = 19, speakers = 0, modem = true, args = { "remote" } },
   link       = { w = 51, h = 19, speakers = 1, modem = true, args = { "link" } },
   link_basic = { w = 51, h = 19, speakers = 1, modem = true, args = { "link" }, basic = true },
+  wired      = { w = 51, h = 19, speakers = 2, modem = true, wired = true },
+  pocket_nospeaker = { w = 26, h = 20, speakers = 0, modem = true, pocket = true },
+  pocket_noisy_remote = { w = 26, h = 20, speakers = 1, modem = true, pocket = true, args = { "remote" } },
 }
 local setup = assert(SETUPS[scenario], "unknown scenario " .. scenario)
 local SIM_SECONDS = 240
@@ -446,7 +449,8 @@ local function makeSpeaker(name)
 end
 for k = 1, setup.speakers do speakers["speaker_" .. k] = makeSpeaker("speaker_" .. k) end
 
-local modem = { isWireless = function() return true end }
+local modem = { isWireless = function() return not setup.wired end }
+if setup.pocket then pocket = {} end
 local monitor = makeTerm(setup.w, setup.h, true)
 
 local function typeOf(name)
@@ -660,7 +664,9 @@ local function monkey()
       -- (the bottom row of the remote holds the Link and PIN buttons)
       at(t, click(math.random(1, W), math.random(1, scenario:find("^remote") and H - 1 or H)))
     elseif r < 0.70 then
-      at(t, "mouse_drag", 1, math.random(1, W), math.random(1, H))
+      local x, y = math.random(1, W), math.random(1, H)
+      at(t, "mouse_drag", 1, x, y)
+      if math.random() < 0.5 then at(t + 0.05, "mouse_up", 1, x, y) end
     elseif r < 0.80 then
       at(t, "key", keylist[math.random(#keylist)])
     elseif r < 0.95 then

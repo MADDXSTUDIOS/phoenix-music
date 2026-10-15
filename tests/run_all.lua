@@ -3,6 +3,7 @@
 local scenarios = {
   "computer", "pocket", "medium", "monitor", "nospeaker",
   "remote", "remote_wide", "link", "link_basic",
+  "wired", "pocket_nospeaker", "pocket_noisy_remote",
 }
 local seeds = { 1, 2, 3, 4, 5 }
 if (os.getenv("SCENARIOS") or "") ~= "" then
