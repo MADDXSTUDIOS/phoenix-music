@@ -351,6 +351,8 @@ local function decodeJSON(s)
         local map = { n = "\n", t = "\t", r = "\r", b = "\b", f = "\f", ['"'] = '"', ["\\"] = "\\", ["/"] = "/" }
         if e == "u" then
           local code = tonumber(s:sub(i + 2, i + 5), 16)
+          -- (stricter than CC, to be safe: half an emoji is rejected)
+          if code >= 0xD800 and code <= 0xDFFF then error("lone surrogate escape") end
           out[#out + 1] = code < 256 and string.char(code) or "?"
           i = i + 6
         else
@@ -358,6 +360,8 @@ local function decodeJSON(s)
           i = i + 2
         end
       else
+        -- like CC: raw control characters aren't allowed in strings
+        if c:byte() < 32 then error("Unescaped whitespace") end
         out[#out + 1] = c
         i = i + 1
       end
@@ -536,6 +540,8 @@ local bengali = utf8char(0x0986) .. utf8char(0x09AE) .. utf8char(0x09BE) .. utf8
 local SEARCH_JSON = '['
   .. '{"name":"Hosting is expensive! Please help.","artist":"patreon.com/exclamatory"},'
   .. '{"id":"aaa","name":"Alan Walker - Faded","artist":"3:33 ' .. dot .. ' Alan Walker"},'
+  -- A title cut off half way through an emoji (sent as an escaped half)
+  .. '{"id":"hlf","name":"I\\u2019m Good \\ud83d","artist":"2:55 ' .. dot .. ' Someone"},'
   .. '{"id":"bbb","name":"Greatest Hits Mix","artist":"1:09:27 ' .. dot .. ' EDM Plus"},'
   .. '{"id":"ccc","name":"' .. bengali .. ' ' .. bengali .. '","artist":"2:23 ' .. dot .. ' Ekattor TV"},'
   .. '{"id":"ddd","name":"' .. note .. 'BGM' .. note .. 'Top 50","artist":"3:05:50 ' .. dot .. ' ' .. note .. note .. 'Music"},'

@@ -1,5 +1,5 @@
 --[[
-  Phoenix Music 3.8.0 for CC: Tweaked
+  Phoenix Music 3.8.1 for CC: Tweaked
   (c) 2026 Phoenix Software - https://github.com/MADDXSTUDIOS/phoenix-music
 
   A music player built on terreng's computercraft-streaming-music.
@@ -61,7 +61,7 @@ local version = "2.1"
 -- About info (shown on the About tab)
 local APP = {
   name = "Phoenix Music",
-  version = "3.8.0",
+  version = "3.8.1",
   publisher = "Phoenix Software",
   year = "2026",
   original = "computercraft-streaming-music",
@@ -2393,6 +2393,13 @@ function F.drawSearch()
     end)
   elseif search_error then
     text(2, 7, "Network error", C.err, C.bg)
+    -- and why, so it can be reported
+    local row = 8
+    for _, l in ipairs(F.wrap(tostring(X.search_why or ""), W - 3)) do
+      if row > H then break end
+      text(2, row, l, C.muted, C.bg)
+      row = row + 1
+    end
   elseif last_search_url then
     text(2, 7, "Searching...", C.muted, C.bg)
   elseif open_playlist then
@@ -2902,8 +2909,9 @@ end
 
 -- The server sleeps when nobody's using it and the odd search fails while it
 -- wakes up, so try twice more (quietly, still "Searching...") before giving up.
-function X.retrySearch()
+function X.retrySearch(why)
   X.search_tries = (X.search_tries or 0) + 1
+  X.search_why = why
   if X.search_tries <= 2 then
     X.search_retry = os.startTimer(2)
   else
@@ -2912,16 +2920,45 @@ function X.retrySearch()
   F.redraw()
 end
 
+-- Search results come back as JSON in UTF-8, which CC can mostly not draw.
+function X.parseResults(raw)
+  -- Read the JSON as it came (CC's reader passes UTF-8 through untouched),
+  -- then squash each bit of text to what CC can draw. Doing it this way
+  -- round means no odd character can ever break the JSON itself.
+  local function tidy(v)
+    if type(v) == "string" then return X.fromUtf8(v) end
+    if type(v) == "table" then
+      for k, x in pairs(v) do v[k] = tidy(x) end
+    end
+    return v
+  end
+  local function try(s, done)
+    local ok, res, err = pcall(textutils.unserialiseJSON, s)
+    if ok and type(res) == "table" then return done and res or tidy(res) end
+    return nil, ok and err or res
+  end
+  local res, why = try(raw)
+  if res then return res end
+  -- Still no good: drop half-emoji escapes and stray control characters
+  res = try((raw:gsub("\\u[dD][89a-fA-F]%x%x", "?"):gsub("[\0-\31]", " ")))
+  if res then return res end
+  -- Last go: the old way, squashing the whole reply first
+  res = try(X.fromUtf8(raw), true)
+  if res then return res end
+  return nil, why
+end
+
 function F.httpLoop()
   while true do
-    local ev, url, handle = os.pullEvent()
+    local ev, url, handle, resp = os.pullEvent()
     if ev == "http_success" then
       if url == last_search_url then
-        search_results = textutils.unserialiseJSON(X.fromUtf8(handle.readAll() or ""))
+        local why
+        search_results, why = X.parseResults(handle.readAll() or "")
         handle.close()
         if type(search_results) ~= "table" then
           search_results = nil
-          X.retrySearch()
+          X.retrySearch("Couldn't read the results: " .. tostring(why))
         else
           -- The server slips a donation banner in as a fake first result.
           -- Real results always have an id; the banner links to Patreon.
@@ -2959,7 +2996,9 @@ function F.httpLoop()
       if last_search_url then http.request({ url = last_search_url, binary = true }) end
     elseif ev == "http_failure" then
       if url == last_search_url then
-        X.retrySearch()
+        local code = type(resp) == "table" and resp.getResponseCode and resp.getResponseCode()
+        if type(resp) == "table" and resp.close then pcall(resp.close) end
+        X.retrySearch(code and ("The server said " .. code) or tostring(handle or "No reply"))
       elseif url == last_download_url then
         is_loading = false
         is_error = true

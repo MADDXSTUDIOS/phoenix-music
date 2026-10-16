@@ -1,5 +1,5 @@
-3.8.0
+3.8.1
+Fix: some searches showing Network error
 + under the heart: add song to a playlist
 Resync button in Settings
 Linked speakers rejoin instantly
-Fix: linked speaker crash on pause/resume
