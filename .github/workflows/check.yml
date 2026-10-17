@@ -17,6 +17,9 @@ jobs:
       - name: Compiles
         run: luac5.2 -p phoenixmusic.lua
 
+      - name: Not too many Lua locals (CC caps it at 200)
+        run: python3 tools/localcheck.py phoenixmusic.lua
+
       - name: version.txt matches the app
         run: |
           app=$(grep -m1 -oP '^  version = "\K[0-9.]+' phoenixmusic.lua)
