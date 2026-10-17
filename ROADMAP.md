@@ -2,6 +2,8 @@
 
 > **Status: proposed, not confirmed.** This is where Phoenix Music *might* go. Nothing here is promised, and every item still needs proper discussion before it's built. Things will change, move or get dropped, especially once we've worked through the hard limits below.
 
+> **Note:** some ideas here depend on two other Phoenix Software projects that **don't exist yet and are still in development**: the **Phoenix Pro Hardware & Networking** add-on mod and **Phoenix OS**. Anything that relies on them can't happen until they're released.
+
 Phoenix Music has to keep working on a plain CC: Tweaked computer running the normal CraftOS shell, with nothing else installed. Everything below is an extra on top of that, never a requirement.
 
 ---
@@ -62,7 +64,7 @@ These come from CC: Tweaked itself (default server config). Server owners can ch
 - Search, queue, playlists, Now Playing, maybe the visualiser.
 
 ### 6. Phoenix Pro Hardware & Networking integration
-Only used when the hardware is present; never required.
+*The add-on mod is still in development and hasn't been released yet.* Only used when the hardware is present; never required.
 - **Advanced speaker**: volume changes without restarting, and possibly better sound.
 - **Higher-resolution computer**: more room on screen.
 - **Laptop**: detected like any other device.
@@ -70,6 +72,7 @@ Only used when the hardware is present; never required.
 - **NAS**: a central music library and space for saved songs (enterprise setups).
 
 ### 7. Phoenix OS
+*Phoenix OS is still in development and hasn't been released yet.*
 - **Hosted mode**: no palette changes that recolour the whole desktop, no drawing outside its window, settings and playlists in the user's folder, updates through the OS's App Store, and the OS's networking instead of taking over modems.
 - Must work on **both Standard (local disk only) and enterprise (NAS)** editions.
 - **Background music service** with the window as a remote, plus taskbar controls.
