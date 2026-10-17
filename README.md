@@ -117,6 +117,10 @@ Use a different Link name to run separate zones, and set a PIN so nobody else ca
 - **Audio quality** is limited by CC's speakers and audio format. Smoothing helps a little but it'll always sound like CC.
 - **Phoenix Music uses terreng's free music server.** If it ever goes down, the player can't fetch music. Running it costs him money, so if you enjoy this, consider supporting him at [patreon.com/exclamatory](https://patreon.com/exclamatory).
 
+## Roadmap
+
+Ideas for where Phoenix Music could go next, and the CC limits they have to work within, are in [ROADMAP.md](ROADMAP.md). Nothing there is confirmed yet.
+
 ## Credits
 
 - **terreng (Terren Gurule)**: original player, music server and audio engine
