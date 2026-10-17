@@ -44,7 +44,7 @@ These come from CC: Tweaked itself (default server config). Server owners can ch
 
 ### 2. Backend safety net
 - **Backend adapters** so the player isn't tied to one server's format.
-- **Our own backend (optional)**: terreng's server (MIT) on Cloud Run with paid YouTube APIs, plus caching, an app key and a length cap.
+- **Our own backend (optional)**: terreng's server (MIT) on Cloud Run with paid YouTube APIs (via RapidAPI), plus caching, an app key and a length cap. Not hosted from home. (Playing YouTube directly from CC isn't possible, so some backend is always needed.)
 - **Support for other backends** (for example JzJad's, if and when it's published, with his blessing).
 - **Local / URL DFPWM playback** for when no server is available. Limited by storage (see above).
 
@@ -65,7 +65,7 @@ These come from CC: Tweaked itself (default server config). Server owners can ch
 
 ### 6. Phoenix Pro Hardware & Networking integration
 *The add-on mod is still in development and hasn't been released yet.* Only used when the hardware is present; never required.
-- **Advanced speaker**: volume changes without restarting, and possibly better sound.
+- **Advanced speaker**: volume changes without restarting, and possibly better sound. Its API is defined only in the mod's [DESIGN.md](https://github.com/MADDXSTUDIOS/CCSN/blob/dev/DESIGN.md); this repo links to it and never keeps its own copy.
 - **Higher-resolution computer**: more room on screen.
 - **Laptop**: detected like any other device.
 - **Rooms**: zoned audio, with each player only seeing its room's speakers.
